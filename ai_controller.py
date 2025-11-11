@@ -12,6 +12,9 @@ class AIController:
         opponent_state = game.players["player"]
         
         if game.current_phase == Phase.MEMORIZATION:
+            # --- ADDED: Check one card rule ---
+            if player_state.placed_card_this_turn:
+                return {"type": "advance_phase"}
             return self.get_memorization_move(game, player_state, opponent_state)
         elif game.current_phase == Phase.INVOCATION:
             return self.get_invocation_move(game, player_state, opponent_state)
@@ -145,7 +148,7 @@ class AIController:
             if "damage" in spell.effect.lower() and opponent_has_spirits:
                 score += spell.scaling * 2  # Higher value for damage when opponent has spirits
             elif "heal" in spell.effect.lower():
-                score += spell.scaling  # Healing is generally good
+                score += spell.scaling  # Healing is
             score -= spell.activation_cost  # Lower cost is better
             return score
         
@@ -226,28 +229,28 @@ class AIController:
                 if game.current_phase == Phase.RESPITE:
                     game.next_phase() # End the turn
                     break
+            
+            # --- MODIFIED: Stop after one placement move ---
             elif move["type"] == "summon_spirit":
                 success, message = game.summon_spirit("npc", move["spirit_name"], move["slot_index"])
-                if not success:
-                    game.next_phase() # Failed, so advance
-                    break
+                game.next_phase() # Advance to Invocation after the one action
+                break
             elif move["type"] == "prepare_spell":
                 success, message = game.prepare_spell("npc", move["spell_name"], move["slot_index"])
-                if not success:
-                    game.next_phase()
-                    break
+                game.next_phase() # Advance to Invocation after the one action
+                break
             elif move["type"] == "replace_spell":
-                # --- This is the fix ---
                 success, message = game.replace_spell("npc", move["new_spell_name"], move["slot_index"])
-                if not success:
-                    game.next_phase() # Failed, so advance
-                    break
+                game.next_phase() # Advance to Invocation after the one action
+                break
+            # --- End of placement moves ---
+
             elif move["type"] == "activate_spell":
                 success, message = game.activate_spell("npc", move["slot_index"], move["copies_used"])
                 # Continue even if activation fails (might be other moves)
             elif move["type"] == "attack":
                 if move["target_type"] == "wizard":
-                    success, message = game.attack_with_spirit("npc", move["spirit_slot"], "wizard") # <-- Fixed typo here
+                    success, message = game.attack_with_spirit("npc", move["spirit_slot"], "wizard")
                 else:
                     success, message = game.attack_with_spirit("npc", move["spirit_slot"], "spirit", move["target_index"])
                 # Continue even if attack fails

@@ -33,6 +33,7 @@ class PlayerState:
         self.spirit_slots = [None, None, None]  # 3 slots
         self.spell_slots = [[], [], [], []]     # 4 slots, each can hold a stack
         self.wizard_ability_used = False
+        self.placed_card_this_turn = False # --- ADDED: One card per turn rule ---
 
 class ArcanaGame:
     def __init__(self):
@@ -64,6 +65,7 @@ class ArcanaGame:
         
         # Give each player 3 of each spirit and 2 of each spell
         for player in self.players.values():
+            player.deck = [] # Ensure deck is empty before adding
             for spirit in test_spirits:
                 for _ in range(3):
                     player.deck.append(Card(spirit.name, spirit.type, spirit.activation_cost, 
@@ -75,6 +77,7 @@ class ArcanaGame:
             
             # Shuffle and draw starting hand of 7
             random.shuffle(player.deck)
+            player.hand = [] # Ensure hand is empty
             for _ in range(7):
                 if player.deck:
                     player.hand.append(player.deck.pop())
@@ -98,11 +101,6 @@ class ArcanaGame:
 
         else:
             self.current_phase = phases[current_index + 1]
-        
-        # Handle phase-specific logic (e.g., if we just entered Attunement)
-        # This was slightly bugged, logic should be at start of phase
-        # if self.current_phase == Phase.ATTAINMENT:
-        #     self.handle_attunement_phase()
     
     def handle_attunement_phase(self):
         player = self.players[self.current_player]
@@ -121,8 +119,9 @@ class ArcanaGame:
         # Gain 2 Aether
         player.aether = min(player.aether + 2, player.max_aether)
         
-        # Reset wizard ability
+        # --- ADDED: Reset turn flags ---
         player.wizard_ability_used = False
+        player.placed_card_this_turn = False
     
     def get_opponent_name(self, player_name):
         return "npc" if player_name == "player" else "player"
@@ -132,12 +131,18 @@ class ArcanaGame:
             return False, "Can only summon during memorization phase"
         
         player = self.players[player_name]
+
+        # --- ADDED: One card per turn rule ---
+        if player.placed_card_this_turn:
+            return False, "Already placed a card this turn"
         
         # Find the spirit in hand
         spirit_card = None
-        for card in player.hand:
+        card_index_in_hand = -1
+        for i, card in enumerate(player.hand):
             if card.type == "spirit" and card.name == spirit_name:
                 spirit_card = card
+                card_index_in_hand = i
                 break
         
         if not spirit_card:
@@ -147,10 +152,11 @@ class ArcanaGame:
         if player.spirit_slots[slot_index] is not None:
             return False, "Spirit slot is occupied"
         
-        # Remove from hand and place in slot
-        player.hand.remove(spirit_card)
+        # Remove from hand (using index) and place in slot
+        player.hand.pop(card_index_in_hand)
         player.spirit_slots[slot_index] = spirit_card
         
+        player.placed_card_this_turn = True # --- ADDED ---
         return True, f"Summoned {spirit_name} to slot {slot_index + 1}"
     
     def prepare_spell(self, player_name, spell_name, slot_index):
@@ -159,11 +165,17 @@ class ArcanaGame:
         
         player = self.players[player_name]
         
+        # --- ADDED: One card per turn rule ---
+        if player.placed_card_this_turn:
+            return False, "Already placed a card this turn"
+
         # Find the spell in hand
         spell_card = None
-        for card in player.hand:
+        card_index_in_hand = -1
+        for i, card in enumerate(player.hand):
             if card.type == "spell" and card.name == spell_name:
                 spell_card = card
+                card_index_in_hand = i
                 break
         
         if not spell_card:
@@ -178,9 +190,10 @@ class ArcanaGame:
             return False, "Can only stack identical spells"
         
         # Remove from hand and add to slot
-        player.hand.remove(spell_card)
+        player.hand.pop(card_index_in_hand)
         player.spell_slots[slot_index].append(spell_card)
         
+        player.placed_card_this_turn = True # --- ADDED ---
         return True, f"Prepared {spell_name} in slot {slot_index + 1}"
 
     def replace_spell(self, player_name, spell_name, slot_index):
@@ -190,11 +203,17 @@ class ArcanaGame:
         
         player = self.players[player_name]
         
+        # --- ADDED: One card per turn rule ---
+        if player.placed_card_this_turn:
+            return False, "Already placed a card this turn"
+
         # Find the spell in hand
         spell_card = None
-        for card in player.hand:
+        card_index_in_hand = -1
+        for i, card in enumerate(player.hand):
             if card.type == "spell" and card.name == spell_name:
                 spell_card = card
+                card_index_in_hand = i
                 break
         
         if not spell_card:
@@ -213,9 +232,10 @@ class ArcanaGame:
                 discard_count += 1
             
         # Remove from hand and place in slot
-        player.hand.remove(spell_card)
+        player.hand.pop(card_index_in_hand)
         player.spell_slots[slot_index] = [spell_card] # Start a new stack
         
+        player.placed_card_this_turn = True # --- ADDED ---
         return True, f"Replaced slot {slot_index + 1} (discarded {discard_count}) with {spell_name}"
 
     def use_wizard_ability(self, player_name):
@@ -224,6 +244,10 @@ class ArcanaGame:
             return False, "Can only use ability during memorization phase"
         
         player = self.players[player_name]
+
+        # --- ADDED: One card per turn rule ---
+        if player.placed_card_this_turn:
+            return False, "Already placed a card this turn"
         if player.wizard_ability_used:
             return False, "Wizard ability already used this turn"
         
@@ -231,6 +255,7 @@ class ArcanaGame:
         # For now, just mark as used and give 1 Aether
         player.aether = min(player.aether + 1, player.max_aether)
         player.wizard_ability_used = True
+        player.placed_card_this_turn = True # --- ADDED (counts as the action) ---
         return True, "Wizard ability used! (Gained 1 Aether)"
 
     def activate_spell(self, player_name, slot_index, copies_used):
@@ -246,8 +271,10 @@ class ArcanaGame:
         
         # Check if we're trying to use more copies than available
         if copies_used > len(player.spell_slots[slot_index]):
-            return False, f"Not enough copies in stack (have {len(player.spell_slots[slot_index])}, need {copies_used})"
-        
+            copies_used = len(player.spell_slots[slot_index]) # Use max available if over
+            if copies_used == 0:
+                return False, "No copies in stack."
+
         spell = player.spell_slots[slot_index][0]
         total_cost = spell.activation_cost * copies_used
         
@@ -335,6 +362,9 @@ class ArcanaGame:
                 self.winner = player_name
             
         elif target_type == "spirit":
+            if not (0 <= target_index < len(opponent.spirit_slots)):
+                return False, "Invalid target slot"
+
             target_spirit = opponent.spirit_slots[target_index]
             if not target_spirit:
                 return False, "No spirit in target slot"

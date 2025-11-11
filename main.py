@@ -10,13 +10,13 @@ class ArcanaVisualizer:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((1200, 800))
-        pygame.display.set_caption("Arcana Simulator") # Fixed typo
+        pygame.display.set_caption("Arcana Simulator")
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont('Noto-Sans', 18, bold=False, italic=False) # Fixed typo and increased size
+        self.font = pygame.font.SysFont('Noto-Sans', 18, bold=False, italic=False)
         self.game = ArcanaGame()
         self.card_manager = CardManager()
         self.ai = AIController()
-        self.last_message = "Welcome to Arcana! Press [5] to start your turn."
+        self.last_message = "Welcome to Arcana! Your turn."
 
         # Color scheme
         self.colors = {
@@ -27,9 +27,24 @@ class ArcanaVisualizer:
             'hp_track': (180, 50, 50),
             'aether_track': (50, 100, 180),
             'log_text': (200, 200, 100),
-            'game_over': (255, 0, 0)
+            'game_over': (255, 0, 0),
+            'prompt_text': (100, 255, 100), # Green for prompts
+            'highlight': (255, 255, 0), # Yellow for selection
         }
+
+        # --- NEW: State machine for player input ---
+        self.input_mode = "NORMAL" # "NORMAL", "SUMMON_CARD", "SUMMON_SLOT", "PREPARE_CARD", "PREPARE_SLOT", etc.
+        self.selected_card = None
+        self.selected_slot = None
+        self.action_prompt = "" # Will show messages like "Select a Spirit card from hand [1-9]"
     
+    def reset_input_state(self):
+        """Helper to cancel actions and return to normal."""
+        self.input_mode = "NORMAL"
+        self.selected_card = None
+        self.selected_slot = None
+        self.action_prompt = ""
+
     def draw_board(self):
         self.screen.fill(self.colors['background'])
 
@@ -50,8 +65,8 @@ class ArcanaVisualizer:
         pygame.display.flip()
 
     def draw_player_side(self):
-        player = self.game.players["player"] # Fixed state access
-        x_start = 250 # --- Shifted board 150px to the right ---
+        player = self.game.players["player"]
+        x_start = 250
 
         # Player HP and Aether tracks
         pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 650, 200, 30))
@@ -64,106 +79,147 @@ class ArcanaVisualizer:
 
         # Player Spirit Slots (3)
         for i in range(3):
-            x, y = x_start + i * 160, 450 # --- Use x_start ---
+            x, y = x_start + i * 160, 450
+            # --- NEW: Highlight valid slots ---
+            is_valid_target = (self.input_mode == "SUMMON_SLOT" and player.spirit_slots[i] is None) or \
+                              (self.input_mode == "ATTACK_TARGET_SPIRIT" and self.game.players["npc"].spirit_slots[i] is not None) # Whoops, this is NPC
+            
+            is_valid_summon_slot = (self.input_mode == "SUMMON_SLOT" and player.spirit_slots[i] is None)
+            is_valid_attacker_slot = (self.input_mode == "ATTACK_SLOT" and player.spirit_slots[i] is not None and player.aether >= player.spirit_slots[i].activation_cost)
+
+            if is_valid_summon_slot or is_valid_attacker_slot:
+                pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 126, 106), border_radius=5)
+            
             pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 120, 100), border_radius=5)
             spirit = player.spirit_slots[i]
             if spirit:
-                self.draw_text(f"{spirit.name}", x+5, y+5)
+                self.draw_text(f"[{i+1}] {spirit.name}", x+5, y+5)
                 self.draw_text(f"HP: {spirit.current_hp}/{spirit.max_hp}", x+5, y+25)
                 self.draw_text(f"P:{spirit.power} D:{spirit.defense}", x+5, y+45)
                 self.draw_text(f"Cost:{spirit.activation_cost}", x+5, y+65)
+            else:
+                self.draw_text(f"[Slot {i+1}]", x+5, y+5)
 
         # Player Spell Slots (4)
         for i in range(4):
-            x, y = x_start + i * 160, 560 # --- Use x_start ---
+            x, y = x_start + i * 160, 560
+            
+            # --- NEW: Highlight valid slots ---
+            is_valid_prepare_slot = self.input_mode == "PREPARE_SLOT" and \
+                                    (not player.spell_slots[i] or \
+                                    (player.spell_slots[i][0].name == self.selected_card.name and len(player.spell_slots[i]) < 3))
+            
+            is_valid_activate_slot = self.input_mode == "ACTIVATE_SLOT" and player.spell_slots[i]
+
+            if is_valid_prepare_slot or is_valid_activate_slot:
+                 pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 126, 86), border_radius=5)
+
             pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 120, 80), border_radius=5)
             spell_stack = player.spell_slots[i]
             if spell_stack:
-                spell = spell_stack[0] # First card in stack
-                self.draw_text(f"{spell.name} x{len(spell_stack)}", x+5, y+5)
+                spell = spell_stack[0]
+                self.draw_text(f"[{i+1}] {spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True) # --- Only wrap effect text ---
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True)
+            else:
+                self.draw_text(f"[Slot {i+1}]", x+5, y+5)
+
 
     def draw_npc_side(self):
-        npc = self.game.players["npc"] # Fixed state access
-        x_start = 250 # --- Shifted board 150px to the right ---
+        npc = self.game.players["npc"]
+        x_start = 250
 
         # NPC HP and Aether
         pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 50, 200, 30))
         hp_text = f"NPC HP: {npc.wizard_hp}/20"
         self.draw_text(hp_text, 60, 55)
 
-        pygame.draw.rect(self.screen, self.colors['aether_track'], (300, 50, 200, 30)) # Fixed y-position
+        pygame.draw.rect(self.screen, self.colors['aether_track'], (300, 50, 200, 30))
         aether_text = f"Aether: {npc.aether}/16"
         self.draw_text(aether_text, 310, 55)
 
         # NPC Spirit Slots (3)
         for i in range(3):
-            x, y = x_start + i * 160, 150 # --- Use x_start ---
+            x, y = x_start + i * 160, 150
+            
+            # --- NEW: Highlight valid attack targets ---
+            is_valid_target = (self.input_mode == "ATTACK_TARGET" and npc.spirit_slots[i] is not None)
+
+            if is_valid_target:
+                pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 126, 106), border_radius=5)
+
             pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 120, 100), border_radius=5)
             spirit = npc.spirit_slots[i]
             if spirit:
-                self.draw_text(f"{spirit.name}", x+5, y+5)
+                self.draw_text(f"[{i+1}] {spirit.name}", x+5, y+5)
                 self.draw_text(f"HP: {spirit.current_hp}/{spirit.max_hp}", x+5, y+25)
                 self.draw_text(f"P:{spirit.power} D:{spirit.defense}", x+5, y+45)
                 self.draw_text(f"Cost:{spirit.activation_cost}", x+5, y+65)
+            else:
+                self.draw_text(f"[Slot {i+1}]", x+5, y+5)
 
         # NPC Spell Slots (4)
         for i in range(4):
-            x, y = x_start + i * 160, 260 # --- Use x_start ---
+            x, y = x_start + i * 160, 260
             pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 120, 80), border_radius=5)
             spell_stack = npc.spell_slots[i]
             if spell_stack:
-                spell = spell_stack[0] # First card in stack
-                self.draw_text(f"{spell.name} x{len(spell_stack)}", x+5, y+5)
+                spell = spell_stack[0]
+                self.draw_text(f"[{i+1}] {spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True) # --- Only wrap effect text ---
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True)
+            else:
+                self.draw_text(f"[Slot {i+1}]", x+5, y+5)
+
 
     def draw_game_info(self):
         phase_text = f"Turn {self.game.turn_count} - {self.game.current_player.upper()} - Phase: {self.game.current_phase.value}"
         self.draw_text(phase_text, 50, 700)
 
-        # Available commands
-        commands = "Player Actions: [1]Summon [2]Prepare [3]Activate [4]Attack [5]End Phase [6]New Game"
-        self.draw_text(commands, 50, 720)
+        # --- MODIFIED: Show contextual prompt ---
+        if self.action_prompt:
+             self.draw_text(self.action_prompt, 50, 720, color=self.colors['prompt_text'])
+        else:
+            commands = "Actions: [1]Summon [2]Prepare [3]Activate [4]Attack [5]End Phase [6]New Game"
+            self.draw_text(commands, 50, 720)
         
         # Draw player hand
-        hand_x = 950 # --- Moved hand to top-right ---
+        hand_x = 950
         self.draw_text("Player Hand:", hand_x, 50)
         player = self.game.players["player"]
         for i, card in enumerate(player.hand):
             hand_text = f"[{i+1}] {card.name} ({card.type})"
-            self.draw_text(hand_text, hand_x, 80 + i * 20) # --- Fixed overlap by using distinct Y ---
+            
+            # --- NEW: Highlight valid cards in hand ---
+            is_valid_card = (self.input_mode == "SUMMON_CARD" and card.type == "spirit") or \
+                            (self.input_mode == "PREPARE_CARD" and card.type == "spell")
+
+            if is_valid_card:
+                self.draw_text(hand_text, hand_x, 80 + i * 20, color=self.colors['highlight'])
+            else:
+                self.draw_text(hand_text, hand_x, 80 + i * 20)
 
         # Draw last message
-        # Use wrap=True for the log so it doesn't run off-screen
         self.draw_text(f"Log: {self.last_message}", 50, 750, color=self.colors['log_text'], wrap=True, max_width=800)
 
-    # This is the new, correctly-named draw_text function
-    def draw_text(self, text, x, y, color=None, wrap=False, max_width=110): # --- Added wrap and max_width params ---
+    def draw_text(self, text, x, y, color=None, wrap=False, max_width=110):
         if color is None:
             color = self.colors['text']
         
         if not wrap:
-            # --- Default behavior: render a single line ---
             text_surface = self.font.render(text, True, color)
             self.screen.blit(text_surface, (x, y))
             return
 
-        # --- Word wrap logic (only if wrap=True) ---
         words = text.split(' ')
         line_spacing = 2
-        # max_width = 110 # Max width for card text
         line_height = self.font.get_linesize() + line_spacing
         
         lines = []
         current_line = ""
         
-        # Handle the case where the input text is already just one word
         if " " not in text:
-            # Handle single-word text that might be too long
             if self.font.size(text)[0] > max_width:
-                # Simple character wrap if one word is too long
                 lines.append(text[:max_width//self.font.size('a')[0]] + '...')
             else:
                 lines.append(text)
@@ -180,170 +236,164 @@ class ArcanaVisualizer:
             text_surface = self.font.render(line, True, color)
             self.screen.blit(text_surface, (x, y + i * line_height))
 
-    # This is the renamed input handling function
+    # --- THIS IS THE NEW INPUT HANDLER ---
     def handle_input(self):
+        player = self.game.players["player"]
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
-            elif event.type == pygame.KEYDOWN:
-                if self.game.game_over:
-                    if event.key == pygame.K_6:
-                        self.game = ArcanaGame()
-                        self.last_message = "New game started!"
-                    continue # Ignore other keys if game is over
+            
+            # Global keys
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    if self.input_mode != "NORMAL":
+                        self.reset_input_state()
+                        self.last_message = "Action canceled."
+                    else:
+                        return False # Quit
+                if event.key == pygame.K_6:
+                    self.game = ArcanaGame()
+                    self.last_message = "New game started!"
+                    self.reset_input_state()
+                    return True # Skip rest of input handling for this frame
 
-                if self.game.current_player == "player":
-                    if event.key == pygame.K_1:
-                        self.player_action_summon()
-                    elif event.key == pygame.K_2:
-                        self.player_action_prepare()
-                    elif event.key == pygame.K_3:
-                        self.player_action_activate()
-                    elif event.key == pygame.K_4:
-                        self.player_action_attack()
-                    elif event.key == pygame.K_5:
+            if self.game.game_over or self.game.current_player != "player":
+                continue # Don't process game inputs if not player's turn or game over
+
+            # --- State Machine Logic ---
+            if event.type == pygame.KEYDOWN:
+                key = event.key
+                
+                # 0-9 number keys
+                num_key = -1
+                if pygame.K_0 <= key <= pygame.K_9:
+                    num_key = key - pygame.K_0
+                if pygame.K_KP0 <= key <= pygame.K_KP9:
+                    num_key = key - pygame.K_KP0
+                
+                # --- NORMAL MODE: Select an action ---
+                if self.input_mode == "NORMAL":
+                    if key == pygame.K_1: # Summon
+                        if self.game.current_phase != Phase.MEMORIZATION:
+                            self.last_message = "Can only summon in Memorization phase."
+                            continue
+                        self.input_mode = "SUMMON_CARD"
+                        self.action_prompt = "Select a Spirit from hand [1-9] (ESC to cancel)"
+                    elif key == pygame.K_2: # Prepare
+                        if self.game.current_phase != Phase.MEMORIZATION:
+                            self.last_message = "Can only prepare in Memorization phase."
+                            continue
+                        self.input_mode = "PREPARE_CARD"
+                        self.action_prompt = "Select a Spell from hand [1-9] (ESC to cancel)"
+                    elif key == pygame.K_3: # Activate
+                        if self.game.current_phase != Phase.INVOCATION:
+                            self.last_message = "Can only activate in Invocation phase."
+                            continue
+                        self.input_mode = "ACTIVATE_SLOT"
+                        self.action_prompt = "Select a Spell slot to activate [1-4] (ESC to cancel)"
+                    elif key == pygame.K_4: # Attack
+                        if self.game.current_phase != Phase.INVOCATION:
+                            self.last_message = "Can only attack in Invocation phase."
+                            continue
+                        self.input_mode = "ATTACK_SLOT"
+                        self.action_prompt = "Select your Spirit to attack with [1-3] (ESC to cancel)"
+                    elif key == pygame.K_5: # End Phase
                         self.game.next_phase()
                         self.last_message = f"Phase advanced to {self.game.current_phase.value}"
-                    elif event.key == pygame.K_6:
-                        self.game = ArcanaGame()
-                        self.last_message = "New game started!"
                 
-                if event.key == pygame.K_ESCAPE:
-                    return False
+                # --- SUMMON MODE ---
+                elif self.input_mode == "SUMMON_CARD":
+                    if 1 <= num_key <= len(player.hand):
+                        card = player.hand[num_key - 1]
+                        if card.type == "spirit":
+                            self.selected_card = card
+                            self.input_mode = "SUMMON_SLOT"
+                            self.action_prompt = f"Select slot for {card.name} [1-3] (ESC to cancel)"
+                        else:
+                            self.last_message = f"{card.name} is not a Spirit. Select a Spirit."
+                    else:
+                        self.last_message = "Invalid hand number."
+                
+                elif self.input_mode == "SUMMON_SLOT":
+                    if 1 <= num_key <= 3:
+                        slot_index = num_key - 1
+                        success, message = self.game.summon_spirit("player", self.selected_card.name, slot_index)
+                        self.last_message = message
+                        self.reset_input_state()
+                    else:
+                        self.last_message = "Invalid slot number. Select [1-3]."
+
+                # --- PREPARE MODE ---
+                elif self.input_mode == "PREPARE_CARD":
+                    if 1 <= num_key <= len(player.hand):
+                        card = player.hand[num_key - 1]
+                        if card.type == "spell":
+                            self.selected_card = card
+                            self.input_mode = "PREPARE_SLOT"
+                            self.action_prompt = f"Select slot for {card.name} [1-4] (ESC to cancel)"
+                        else:
+                            self.last_message = f"{card.name} is not a Spell. Select a Spell."
+                    else:
+                        self.last_message = "Invalid hand number."
+
+                elif self.input_mode == "PREPARE_SLOT":
+                    if 1 <= num_key <= 4:
+                        slot_index = num_key - 1
+                        success, message = self.game.prepare_spell("player", self.selected_card.name, slot_index)
+                        self.last_message = message
+                        self.reset_input_state()
+                    else:
+                        self.last_message = "Invalid slot number. Select [1-4]."
+
+                # --- ACTIVATE MODE ---
+                elif self.input_mode == "ACTIVATE_SLOT":
+                    if 1 <= num_key <= 4:
+                        slot_index = num_key - 1
+                        if not player.spell_slots[slot_index]:
+                            self.last_message = "That slot is empty."
+                            continue
+                        # Simple: just activate 1 copy for now.
+                        # TODO: Ask *how many* copies to use
+                        success, message = self.game.activate_spell("player", slot_index, 1)
+                        self.last_message = message
+                        self.reset_input_state()
+                    else:
+                        self.last_message = "Invalid slot number. Select [1-4]."
+
+                # --- ATTACK MODE ---
+                elif self.input_mode == "ATTACK_SLOT":
+                    if 1 <= num_key <= 3:
+                        slot_index = num_key - 1
+                        spirit = player.spirit_slots[slot_index]
+                        if not spirit:
+                            self.last_message = "That slot is empty."
+                            continue
+                        if player.aether < spirit.activation_cost:
+                            self.last_message = f"Not enough Aether for {spirit.name}."
+                            continue
+                        
+                        self.selected_slot = slot_index # This is the ATTACKER
+                        self.input_mode = "ATTACK_TARGET"
+                        self.action_prompt = f"Select target for {spirit.name} [1-3], or [0] for Wizard (ESC to cancel)"
+                    else:
+                        self.last_message = "Invalid slot number. Select [1-3]."
+                
+                elif self.input_mode == "ATTACK_TARGET":
+                    if 0 <= num_key <= 3:
+                        attacker_slot = self.selected_slot
+                        if num_key == 0: # Target Wizard
+                            success, message = self.game.attack_with_spirit("player", attacker_slot, "wizard")
+                        else: # Target Spirit
+                            target_slot = num_key - 1
+                            success, message = self.game.attack_with_spirit("player", attacker_slot, "spirit", target_slot)
+                        
+                        self.last_message = message
+                        self.reset_input_state()
+                    else:
+                        self.last_message = "Invalid target. Select NPC spirit [1-3] or Wizard [0]."
+        
         return True
-    
-    # --- New Player Action Handlers ---
-    # These replace the old CLI input() functions
-    
-    def player_action_summon(self):
-        """Summons the first available spirit from hand to the first empty slot."""
-        if self.game.current_phase != Phase.MEMORIZATION:
-            self.last_message = "Cannot summon outside Memorization phase."
-            return
-        
-        player = self.game.players["player"]
-        
-        # Find first spirit in hand
-        spirit_to_summon = None
-        for card in player.hand:
-            if card.type == "spirit":
-                spirit_to_summon = card
-                break
-        
-        # Find first empty slot
-        slot = -1
-        for i in range(len(player.spirit_slots)):
-            if player.spirit_slots[i] is None:
-                slot = i
-                break
-                
-        if spirit_to_summon and slot != -1:
-            success, message = self.game.summon_spirit("player", spirit_to_summon.name, slot)
-            self.last_message = message
-        elif not spirit_to_summon:
-            self.last_message = "No spirits in hand to summon."
-        else:
-            self.last_message = "No empty spirit slots."
-    
-    def player_action_prepare(self):
-        """Prepares the first available spell from hand to the first valid slot."""
-        if self.game.current_phase != Phase.MEMORIZATION:
-            self.last_message = "Cannot prepare outside Memorization phase."
-            return
-
-        player = self.game.players["player"]
-        
-        # Find first spell in hand
-        spell_to_prepare = None
-        for card in player.hand:
-            if card.type == "spell":
-                spell_to_prepare = card
-                break
-        
-        if not spell_to_prepare:
-            self.last_message = "No spells in hand to prepare."
-            return
-
-        # Find first available slot (empty or stackable)
-        slot = -1
-        for i in range(len(player.spell_slots)):
-            stack = player.spell_slots[i]
-            if not stack: # Empty slot
-                slot = i
-                break
-            if stack and stack[0].name == spell_to_prepare.name and len(stack) < 3: # Stackable slot
-                slot = i
-                break
-        
-        if slot != -1:
-            success, message = self.game.prepare_spell("player", spell_to_prepare.name, slot)
-            self.last_message = message
-        else:
-            self.last_message = f"No valid slot for {spell_to_prepare.name}."
-
-    def player_action_activate(self):
-        """Activates 1 copy of the first available spell."""
-        if self.game.current_phase != Phase.INVOCATION:
-            self.last_message = "Cannot activate outside Invocation phase."
-            return
-
-        player = self.game.players["player"]
-
-        # Find first non-empty spell slot
-        slot = -1
-        for i in range(len(player.spell_slots)):
-            if player.spell_slots[i]:
-                slot = i
-                break
-        
-        if slot != -1:
-            # Activate 1 copy
-            success, message = self.game.activate_spell("player", slot, 1)
-            self.last_message = message
-        else:
-            self.last_message = "No prepared spells to activate."
-    
-    def player_action_attack(self):
-        """Attacks with the first available spirit."""
-        if self.game.current_phase != Phase.INVOCATION:
-            self.last_message = "Cannot attack outside Invocation phase."
-            return
-
-        player = self.game.players["player"]
-        opponent = self.game.players["npc"]
-        
-        # Find first spirit that can attack
-        attacker_slot = -1
-        for i, spirit in enumerate(player.spirit_slots):
-            if spirit and player.aether >= spirit.activation_cost:
-                attacker_slot = i
-                break
-        
-        if attacker_slot == -1:
-            self.last_message = "No spirits ready (or not enough Aether)."
-            return
-        
-        # Find target
-        opponent_has_spirits = any(opponent.spirit_slots)
-        attacker = player.spirit_slots[attacker_slot]
-        
-        if not opponent_has_spirits or "directly" in attacker.effect.lower():
-            # Attack wizard
-            success, message = self.game.attack_with_spirit("player", attacker_slot, "wizard")
-            self.last_message = message
-        else:
-            # Attack first enemy spirit
-            target_slot = -1
-            for i, spirit in enumerate(opponent.spirit_slots):
-                if spirit:
-                    target_slot = i
-                    break
-            
-            if target_slot != -1:
-                success, message = self.game.attack_with_spirit("player", attacker_slot, "spirit", target_slot)
-                self.last_message = message
-            else:
-                self.last_message = "Error: Opponent has spirits, but none found?"
 
     def run(self):
         running = True
@@ -352,9 +402,10 @@ class ArcanaVisualizer:
             
             # AI turn logic
             if self.game.current_player == "npc" and not self.game.game_over:
-                pygame.time.delay(500) # Brief pause to see NPC actions
+                pygame.time.delay(250) # Short pause
                 self.ai.execute_ai_turn(self.game)
-                self.last_message = "NPC turn finished."
+                self.last_message = "NPC turn finished. Your turn."
+                self.reset_input_state() # Ensure player input is reset
 
             self.draw_board()
             self.clock.tick(30)
