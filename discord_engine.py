@@ -59,18 +59,38 @@ class ArcanaGame:
         # Initialize decks from JSON files
         self.initialize_decks()
     
-    def _load_deck_from_file(self, file_path):
+    def _load_deck_for_user(self, user_id, default_deck_path):
         """
-        Loads a deck list from a .json file, creates card instances,
-        and returns them as a list.
+        Loads a deck for a specific user ID.
+        If config/decks/USER_ID.json exists and is not empty, loads that.
+        Otherwise, loads the default_deck_path.
         """
+        user_deck_file = f"config/decks/{user_id}.json"
+        path_to_load = default_deck_path # Default
+        
+        # Check if user deck exists and is not empty
+        if os.path.exists(user_deck_file) and os.path.getsize(user_deck_file) > 2: # > 2 to check if it's more than just "{}"
+            try:
+                with open(user_deck_file, 'r') as f:
+                    deck_data = json.load(f)
+                    if deck_data.get("spirits") or deck_data.get("spells"):
+                        path_to_load = user_deck_file # Use custom deck
+                        print(f"Loading custom deck for user {user_id} from {user_deck_file}")
+                    else:
+                         print(f"Custom deck for {user_id} is empty. Loading default: {default_deck_path}")
+            except json.JSONDecodeError:
+                 print(f"Error reading custom deck for {user_id}. Loading default: {default_deck_path}")
+        else:
+            print(f"No custom deck for {user_id}. Loading default: {default_deck_path}")
+
+
         deck = []
-        if not os.path.exists(file_path):
-            print(f"Warning: Deck file not found: {file_path}")
+        if not os.path.exists(path_to_load):
+            print(f"Warning: Deck file not found for user {user_id} at {path_to_load}. Using empty deck.")
             return deck
 
         try:
-            with open(file_path, 'r') as f:
+            with open(path_to_load, 'r') as f:
                 deck_config = json.load(f)
 
             # Load spirits
@@ -80,7 +100,7 @@ class ArcanaGame:
                     if card_instance:
                         deck.append(card_instance)
                     else:
-                        print(f"Warning: Card ID '{card_id}' not found in card library.")
+                        print(f"Warning: Card ID '{card_id}' in {path_to_load} not found in card library.")
             
             # Load spells
             for card_id, quantity in deck_config.get("spells", {}).items():
@@ -89,35 +109,39 @@ class ArcanaGame:
                     if card_instance:
                         deck.append(card_instance)
                     else:
-                        print(f"Warning: Card ID '{card_id}' not found in card library.")
+                        print(f"Warning: Card ID '{card_id}' in {path_to_load} not found in card library.")
         
         except Exception as e:
-            print(f"Error loading deck from {file_path}: {e}")
+            print(f"Error loading deck from {path_to_load}: {e}")
 
         return deck
 
     def initialize_decks(self):
         """
-        Initializes player decks by loading from their JSON config files.
-        Player 1 (challenger) gets player_deck.json
-        Player 2 (opponent) gets npc_deck.json
+        Initializes player decks by loading their custom deck or the default.
         """
-        player_deck_file = "config/player_deck.json"
-        opponent_deck_file = "config/npc_deck.json" # Player 2 uses the "npc" deck
-
-        # Load decks
-        self.players[self.player1_id].deck = self._load_deck_from_file(player_deck_file)
-        self.players[self.player2_id].deck = self._load_deck_from_file(opponent_deck_file)
+        # Player 1 (Challenger) uses their own deck or the default player_deck.json
+        self.players[self.player1_id].deck = self._load_deck_for_user(
+            self.player1_id, 
+            "config/player_deck.json"
+        )
+        
+        # Player 2 (Opponent) uses their own deck or the default npc_deck.json
+        self.players[self.player2_id].deck = self._load_deck_for_user(
+            self.player2_id, 
+            "config/npc_deck.json" # Opponents use their own deck or the NPC default
+        )
         
         # Shuffle and draw starting hands
-        for player in self.players.values():
+        for player_id, player in self.players.items():
             if not player.deck:
-                print(f"Warning: {player.name} has no deck. Check config files.")
+                print(f"Warning: Player {player_id} has no deck (0 cards). Check config files.")
                 continue
 
             random.shuffle(player.deck)
             player.hand = [] # Ensure hand is empty
-            for _ in range(7):
+            draw_count = min(7, len(player.deck)) # Don't draw more than in deck
+            for _ in range(draw_count):
                 if player.deck:
                     player.hand.append(player.deck.pop())
     

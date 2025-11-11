@@ -14,7 +14,17 @@ except ImportError:
         print("CRITICAL: Could not import Card class from game_engine or discord_engine.")
         # Define a fallback class so the file can at least be imported
         class Card:
-             def __init__(self, **kwargs):
+             def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element=""):
+                self.name = name
+                self.type = card_type
+                self.activation_cost = activation_cost
+                self.power = power
+                self.defense = defense
+                self.max_hp = hp
+                self.current_hp = hp
+                self.effect = effect
+                self.scaling = scaling
+                self.element = element
                 print("Using fallback Card class")
 
 
@@ -77,7 +87,9 @@ class CardManager:
                 print(f"Warning: {file_path} not found. Creating with default cards.")
                 self.cards = default_cards
                 # Create directory if it doesn't exist
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+                config_dir = os.path.dirname(file_path)
+                if config_dir and not os.path.exists(config_dir):
+                    os.makedirs(config_dir, exist_ok=True)
                 # Save defaults
                 with open(file_path, 'w') as f:
                     json.dump(default_cards, f, indent=2)
@@ -109,7 +121,7 @@ class CardManager:
         card_type = self.get_card_type(card_id)
 
         if not card_data or not card_type:
-            print(f"Error: Card ID '{card_id}' not found in card library.")
+            # print(f"Error: Card ID '{card_id}' not found in card library.")
             return None # Card ID not found in library
         
         # Create instance based on type

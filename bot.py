@@ -5,6 +5,7 @@ import os
 import json # Import json for deck management
 from io import BytesIO
 from dotenv import load_dotenv # <-- Import dotenv
+import asyncio # Added for autocomplete
 
 # --- Load .env variables ---
 load_dotenv()
@@ -64,6 +65,7 @@ def load_user_deck(user_id: int) -> dict:
         with open(deck_path, 'r') as f:
             return json.load(f)
     except json.JSONDecodeError:
+        print(f"Error: Corrupted deck file for user {user_id}. Returning empty deck.")
         return {"spirits": {}, "spells": {}} # Return empty on corrupted file
 
 def save_user_deck(user_id: int, deck_data: dict):
@@ -378,7 +380,7 @@ async def on_ready():
     try:
         if TEST_GUILD:
             print(f"Syncing commands to Test Guild (ID: {TEST_GUILD.id})...")
-            # This copies global commands to the guild and syncs them.
+            # This syncs all commands (global and guild-specific) to the test guild.
             synced = await bot.tree.sync(guild=TEST_GUILD)
         else:
             print("Syncing commands globally (this may take an hour)...")
@@ -442,8 +444,10 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
 
 # --- Deck Management Commands ---
 
+# Define the group
 deck_group = app_commands.Group(name="deck", description="Manage your custom deck")
 
+# Add commands to the group and specify the guild
 @deck_group.command(name="view", description="View your current custom deck")
 async def deck_view(interaction: discord.Interaction):
     deck = load_user_deck(interaction.user.id)
@@ -504,7 +508,8 @@ async def deck_remove(interaction: discord.Interaction, card_id: str, quantity: 
     new_qty = max(0, current_qty - quantity)
     
     if new_qty == 0:
-        del deck[card_type][card_id]
+        if card_id in deck[card_type]: # Check existence before deleting
+            del deck[card_type][card_id]
     else:
         deck[card_type][card_id] = new_qty
         
@@ -520,12 +525,16 @@ async def deck_reset(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("You don't have a custom deck to delete.", ephemeral=True)
 
-bot.tree.add_command(deck_group)
+# Add the group to the bot's command tree
+bot.tree.add_command(deck_group, guild=TEST_GUILD)
+
 
 # --- Admin Commands ---
 
+# Define the group
 admin_group = app_commands.Group(name="admin", description="Admin-only commands", default_permissions=discord.Permissions(administrator=True))
 
+# Add commands to the group and specify the guild
 @admin_group.command(name="addspirit", description="[Admin] Add a new spirit to the card library")
 @is_admin()
 @app_commands.describe(
@@ -551,8 +560,11 @@ async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, 
         "effect": effect
     }
     
-    card_manager.update_card(card_id, new_card_data, "spirits")
-    await interaction.response.send_message(f"Successfully added spirit: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
+    if card_manager.update_card(card_id, new_card_data, "spirits"):
+        await interaction.response.send_message(f"Successfully added spirit: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Error: Failed to save card to `cards.json`.", ephemeral=True)
+
 
 @admin_group.command(name="addspell", description="[Admin] Add a new spell to the card library")
 @is_admin()
@@ -575,8 +587,11 @@ async def add_spell(interaction: discord.Interaction, card_id: str, name: str, c
         "scaling": scaling
     }
     
-    card_manager.update_card(card_id, new_card_data, "spells")
-    await interaction.response.send_message(f"Successfully added spell: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
+    if card_manager.update_card(card_id, new_card_data, "spells"):
+        await interaction.response.send_message(f"Successfully added spell: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Error: Failed to save card to `cards.json`.", ephemeral=True)
+
 
 @admin_group.command(name="shutdown", description="[Admin] Shuts down the bot.")
 @is_admin()
@@ -594,7 +609,8 @@ async def shutdown_error(interaction: discord.Interaction, error: app_commands.A
     else:
         await interaction.response.send_message(f"An error occurred: {error}", ephemeral=True)
 
-bot.tree.add_command(admin_group)
+# Add the group to the bot's command tree
+bot.tree.add_command(admin_group, guild=TEST_GUILD)
 
 
 # --- Run the Bot ---
