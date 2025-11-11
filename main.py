@@ -233,7 +233,7 @@ class ArcanaVisualizer:
                 self.draw_text(hand_text, hand_x, 80 + i * 20)
 
         # Draw last message
-        self.draw_text(f"Log: {self.last_message}", 300, 850, color=self.colors['log_text'], wrap=True, max_width=700)
+        self.draw_text(f"Log: {self.last_message}", 440, 820, color=self.colors['log_text'], wrap=True, max_width=700)
 
     def draw_text(self, text, x, y, color=None, wrap=False, max_width=110):
         if color is None:
