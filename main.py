@@ -60,7 +60,7 @@ class ArcanaVisualizer:
         # Draw Game Over
         if self.game.game_over:
             self.draw_text(f"GAME OVER - {self.game.winner.upper()} WINS!", 400, 350, color=self.colors['game_over'])
-            self.draw_text("Press [6] to play again", 400, 380, color=self.colors['game_over'])
+            self.draw_text("Press [R] to play again", 400, 380, color=self.colors['game_over'])
 
         pygame.display.flip()
 
@@ -180,7 +180,7 @@ class ArcanaVisualizer:
         if self.action_prompt:
              self.draw_text(self.action_prompt, 50, 720, color=self.colors['prompt_text'])
         else:
-            commands = "Actions: [1]Summon [2]Prepare [3]Activate [4]Attack [5]End Phase [6]New Game"
+            commands = "Actions: [1]Summon [2]Prepare [3]Activate [4]Attack [5]End Phase [R]New Game"
             self.draw_text(commands, 50, 720)
         
         # Draw player hand
@@ -252,7 +252,7 @@ class ArcanaVisualizer:
                         self.last_message = "Action canceled."
                     else:
                         return False # Quit
-                if event.key == pygame.K_6:
+                if event.key == pygame.K_r:
                     self.game = ArcanaGame()
                     self.last_message = "New game started!"
                     self.reset_input_state()
