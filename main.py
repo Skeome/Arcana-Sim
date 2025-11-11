@@ -51,6 +51,7 @@ class ArcanaVisualizer:
 
     def draw_player_side(self):
         player = self.game.players["player"] # Fixed state access
+        x_start = 250 # --- Shifted board 150px to the right ---
 
         # Player HP and Aether tracks
         pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 650, 200, 30))
@@ -63,7 +64,7 @@ class ArcanaVisualizer:
 
         # Player Spirit Slots (3)
         for i in range(3):
-            x, y = 100 + i * 160, 450
+            x, y = x_start + i * 160, 450 # --- Use x_start ---
             pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 120, 100), border_radius=5)
             spirit = player.spirit_slots[i]
             if spirit:
@@ -74,17 +75,18 @@ class ArcanaVisualizer:
 
         # Player Spell Slots (4)
         for i in range(4):
-            x, y = 100 + i * 160, 560
+            x, y = x_start + i * 160, 560 # --- Use x_start ---
             pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 120, 80), border_radius=5)
             spell_stack = player.spell_slots[i]
             if spell_stack:
                 spell = spell_stack[0] # First card in stack
                 self.draw_text(f"{spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45) # Fixed attribute name
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True) # --- Only wrap effect text ---
 
     def draw_npc_side(self):
         npc = self.game.players["npc"] # Fixed state access
+        x_start = 250 # --- Shifted board 150px to the right ---
 
         # NPC HP and Aether
         pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 50, 200, 30))
@@ -97,7 +99,7 @@ class ArcanaVisualizer:
 
         # NPC Spirit Slots (3)
         for i in range(3):
-            x, y = 100 + i * 160, 150
+            x, y = x_start + i * 160, 150 # --- Use x_start ---
             pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 120, 100), border_radius=5)
             spirit = npc.spirit_slots[i]
             if spirit:
@@ -108,14 +110,14 @@ class ArcanaVisualizer:
 
         # NPC Spell Slots (4)
         for i in range(4):
-            x, y = 100 + i * 160, 260
+            x, y = x_start + i * 160, 260 # --- Use x_start ---
             pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 120, 80), border_radius=5)
             spell_stack = npc.spell_slots[i]
             if spell_stack:
                 spell = spell_stack[0] # First card in stack
                 self.draw_text(f"{spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45) # Fixed attribute name
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True) # --- Only wrap effect text ---
 
     def draw_game_info(self):
         phase_text = f"Turn {self.game.turn_count} - {self.game.current_player.upper()} - Phase: {self.game.current_phase.value}"
@@ -126,24 +128,32 @@ class ArcanaVisualizer:
         self.draw_text(commands, 50, 720)
         
         # Draw player hand
-        self.draw_text("Player Hand:", 700, 450)
+        hand_x = 950 # --- Moved hand to top-right ---
+        self.draw_text("Player Hand:", hand_x, 50)
         player = self.game.players["player"]
         for i, card in enumerate(player.hand):
             hand_text = f"[{i+1}] {card.name} ({card.type})"
-            self.draw_text(hand_text, 700, 480 + i * 20)
+            self.draw_text(hand_text, hand_x, 80 + i * 20) # --- Fixed overlap by using distinct Y ---
 
         # Draw last message
-        self.draw_text(f"Log: {self.last_message}", 50, 750, color=self.colors['log_text'])
+        # Use wrap=True for the log so it doesn't run off-screen
+        self.draw_text(f"Log: {self.last_message}", 50, 750, color=self.colors['log_text'], wrap=True, max_width=800)
 
     # This is the new, correctly-named draw_text function
-    def draw_text(self, text, x, y, color=None):
+    def draw_text(self, text, x, y, color=None, wrap=False, max_width=110): # --- Added wrap and max_width params ---
         if color is None:
             color = self.colors['text']
         
-        # Simple word wrapping
+        if not wrap:
+            # --- Default behavior: render a single line ---
+            text_surface = self.font.render(text, True, color)
+            self.screen.blit(text_surface, (x, y))
+            return
+
+        # --- Word wrap logic (only if wrap=True) ---
         words = text.split(' ')
         line_spacing = 2
-        max_width = 110 # Max width for card text
+        # max_width = 110 # Max width for card text
         line_height = self.font.get_linesize() + line_spacing
         
         lines = []
@@ -151,7 +161,12 @@ class ArcanaVisualizer:
         
         # Handle the case where the input text is already just one word
         if " " not in text:
-            lines.append(text)
+            # Handle single-word text that might be too long
+            if self.font.size(text)[0] > max_width:
+                # Simple character wrap if one word is too long
+                lines.append(text[:max_width//self.font.size('a')[0]] + '...')
+            else:
+                lines.append(text)
         else:
             for word in words:
                 if self.font.size(current_line + " " + word)[0] <= max_width:

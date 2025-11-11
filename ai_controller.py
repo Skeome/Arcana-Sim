@@ -237,7 +237,6 @@ class AIController:
                     game.next_phase()
                     break
             elif move["type"] == "replace_spell":
-                # --- This is the fix ---
                 success, message = game.replace_spell("npc", move["new_spell_name"], move["slot_index"])
                 if not success:
                     game.next_phase() # Failed, so advance
