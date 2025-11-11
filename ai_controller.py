@@ -54,12 +54,13 @@ class AIController:
                     return {"type": "prepare_spell", "spell_name": spell.name, "slot_index": slot}
         
         # 3. Replace weak spells if no other options
-        if player.spell_slots and player.hand:
+        spells_in_hand = [card for card in player.hand if card.type == "spell"]
+        if player.spell_slots and spells_in_hand:
             # Find weakest spell stack (lowest activation cost or damage)
             weakest_slot = self.find_weakest_spell_slot(player.spell_slots)
             if weakest_slot is not None:
                 # Check if we have a better spell in hand
-                better_spell = self.find_better_spell(player.hand, player.spell_slots[weakest_slot][0])
+                better_spell = self.find_better_spell(spells_in_hand, player.spell_slots[weakest_slot][0])
                 if better_spell:
                     return {"type": "replace_spell", "slot_index": weakest_slot, "new_spell_name": better_spell.name}
         
@@ -209,19 +210,26 @@ class AIController:
         action_count = 0
         
         while (game.current_player == "npc" and 
-               game.current_phase in [Phase.MEMORIZATION, Phase.INVOCATION] and
+               not game.game_over and
                action_count < max_actions):
             
+            # Auto-advance attunement and respite
+            if game.current_phase in [Phase.ATTAINMENT, Phase.RESPITE]:
+                game.next_phase()
+                continue # Loop again to process next phase
+
             move = self.get_move(game)
             
             if move["type"] == "advance_phase":
                 game.next_phase()
-                break
+                # If we're advancing from invocation, the turn is over
+                if game.current_phase == Phase.RESPITE:
+                    game.next_phase() # End the turn
+                    break
             elif move["type"] == "summon_spirit":
                 success, message = game.summon_spirit("npc", move["spirit_name"], move["slot_index"])
                 if not success:
-                    # If summon failed, try to advance phase
-                    game.next_phase()
+                    game.next_phase() # Failed, so advance
                     break
             elif move["type"] == "prepare_spell":
                 success, message = game.prepare_spell("npc", move["spell_name"], move["slot_index"])
@@ -229,9 +237,11 @@ class AIController:
                     game.next_phase()
                     break
             elif move["type"] == "replace_spell":
-                # For now, just advance phase (replace not fully implemented in game_engine)
-                game.next_phase()
-                break
+                # --- This is the fix ---
+                success, message = game.replace_spell("npc", move["new_spell_name"], move["slot_index"])
+                if not success:
+                    game.next_phase() # Failed, so advance
+                    break
             elif move["type"] == "activate_spell":
                 success, message = game.activate_spell("npc", move["slot_index"], move["copies_used"])
                 # Continue even if activation fails (might be other moves)
@@ -247,3 +257,9 @@ class AIController:
             # Check if game ended
             if game.game_over:
                 break
+        
+        # Ensure turn ends if loop finishes
+        if game.current_player == "npc" and not game.game_over:
+            if game.current_phase != Phase.ATTAINMENT: # If we are not already on the next player's turn
+                game.current_phase = Phase.RESPITE
+                game.next_phase() # This will pass the turn
