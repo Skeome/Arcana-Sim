@@ -1,6 +1,22 @@
 import json
 import os
-from game_engine import Card # <-- Import Card here
+
+# We need to dynamically import the Card class from one of the engines
+# It's defined in both, so we can just pick one.
+# This is a bit of a workaround for sharing the class definition.
+try:
+    from game_engine import Card
+except ImportError:
+    print("Could not import Card from game_engine, trying discord_engine...")
+    try:
+        from discord_engine import Card
+    except ImportError:
+        print("CRITICAL: Could not import Card class from game_engine or discord_engine.")
+        # Define a fallback class so the file can at least be imported
+        class Card:
+             def __init__(self, **kwargs):
+                print("Using fallback Card class")
+
 
 class CardManager:
     def __init__(self):
@@ -58,6 +74,7 @@ class CardManager:
                 with open(file_path, 'r') as f:
                     self.cards = json.load(f)
             else:
+                print(f"Warning: {file_path} not found. Creating with default cards.")
                 self.cards = default_cards
                 # Create directory if it doesn't exist
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
@@ -69,10 +86,18 @@ class CardManager:
             self.cards = default_cards
     
     def get_card(self, card_id):
-        # Search for card in spirits and spells
+        """Gets the raw data for a card from the library."""
         for category in ["spirits", "spells"]:
             if card_id in self.cards.get(category, {}):
                 return self.cards[category][card_id]
+        return None
+
+    def get_card_type(self, card_id) -> str | None:
+        """Returns the category ('spirits' or 'spells') of a card ID."""
+        if card_id in self.cards.get("spirits", {}):
+            return "spirits"
+        if card_id in self.cards.get("spells", {}):
+            return "spells"
         return None
     
     def create_card_instance(self, card_id):
@@ -80,37 +105,28 @@ class CardManager:
         Finds a card by its ID in the library (spirits or spells)
         and returns a new Card object instance.
         """
-        card_data = None
-        card_type = None
+        card_data = self.get_card(card_id)
+        card_type = self.get_card_type(card_id)
 
-        # Check in spirits
-        if card_id in self.cards.get("spirits", {}):
-            card_data = self.cards["spirits"][card_id]
-            card_type = "spirit"
-        # Check in spells
-        elif card_id in self.cards.get("spells", {}):
-            card_data = self.cards["spells"][card_id]
-            card_type = "spell"
-
-        if not card_data:
+        if not card_data or not card_type:
             print(f"Error: Card ID '{card_id}' not found in card library.")
             return None # Card ID not found in library
         
         # Create instance based on type
-        if card_type == "spirit":
+        if card_type == "spirits":
             return Card(
                 name=card_data["name"],
-                card_type=card_type,
+                card_type="spirit", # Use singular 'spirit'
                 activation_cost=card_data.get("activation_cost", 0),
                 power=card_data.get("power", 0),
                 defense=card_data.get("defense", 0),
                 hp=card_data.get("hp", 0),
                 effect=card_data.get("effect", "")
             )
-        else:  # spell
+        else:  # spells
             return Card(
                 name=card_data["name"],
-                card_type=card_type,
+                card_type="spell", # Use singular 'spell'
                 activation_cost=card_data.get("activation_cost", 0),
                 effect=card_data.get("effect", ""),
                 scaling=card_data.get("scaling", 0),
@@ -126,14 +142,23 @@ class CardManager:
             print(f"Error saving cards: {e}")
             return False
     
-    def update_card(self, card_id, new_data, category):
+    def update_card(self, card_id, new_data, category: str):
+        """
+        Adds or updates a card in the loaded library and saves to cards.json.
+        Category should be 'spirits' or 'spells'.
+        """
         if category not in self.cards:
             self.cards[category] = {}
         
         self.cards[category][card_id] = new_data
-        return self.save_cards()
+        
+        # Reload the cards in the manager after saving
+        success = self.save_cards()
+        self.load_cards() # Reload to ensure consistency
+        return success
     
-    def get_all_card_ids(self):
+    def get_all_card_ids(self) -> list[str]:
+        """Gets a list of all card IDs from both spirits and spells."""
         card_ids = []
         for category in ["spirits", "spells"]:
             card_ids.extend(self.cards.get(category, {}).keys())

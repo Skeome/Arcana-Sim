@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import os
+import json # Import json for deck management
 from io import BytesIO
 from dotenv import load_dotenv # <-- Import dotenv
 
@@ -43,6 +44,36 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # active_games = { channel_id: ArcanaGame_instance }
 active_games = {}
 card_manager = CardManager() # Load the card library once
+
+# --- Deck Management Helpers ---
+DECK_DIR = "config/decks"
+if not os.path.exists(DECK_DIR):
+    os.makedirs(DECK_DIR) # Create the /decks folder if it doesn't exist
+
+def get_user_deck_path(user_id: int) -> str:
+    """Returns the file path for a user's custom deck."""
+    return os.path.join(DECK_DIR, f"{user_id}.json")
+
+def load_user_deck(user_id: int) -> dict:
+    """Loads a user's custom deck from their JSON file."""
+    deck_path = get_user_deck_path(user_id)
+    if not os.path.exists(deck_path):
+        return {"spirits": {}, "spells": {}} # Return empty deck
+    
+    try:
+        with open(deck_path, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError:
+        return {"spirits": {}, "spells": {}} # Return empty on corrupted file
+
+def save_user_deck(user_id: int, deck_data: dict):
+    """Saves a user's custom deck to their JSON file."""
+    deck_path = get_user_deck_path(user_id)
+    try:
+        with open(deck_path, 'w') as f:
+            json.dump(deck_data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving deck for user {user_id}: {e}")
 
 # --- Image Generation (The new "View") ---
 
@@ -364,9 +395,21 @@ def is_admin():
         return interaction.user.id in ADMIN_USER_IDS
     return app_commands.check(predicate)
 
+# --- Card Name Autocomplete ---
+async def card_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    """Autocompletes card IDs from the card manager."""
+    all_card_ids = card_manager.get_all_card_ids()
+    return [
+        app_commands.Choice(name=card_id, value=card_id)
+        for card_id in all_card_ids if current.lower() in card_id.lower()
+    ][:25] # Discord limit of 25 choices
+
 # --- Game Commands ---
 
-@bot.tree.command(name="challenge", description="Challenge another player to a game of Arcana", guild=TEST_GUILD) # <-- Sync to test guild
+@bot.tree.command(name="challenge", description="Challenge another player to a game of Arcana", guild=TEST_GUILD)
 @app_commands.describe(opponent="The player you want to challenge")
 async def challenge(interaction: discord.Interaction, opponent: discord.User):
     if opponent.bot:
@@ -398,10 +441,146 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
         view=GameActionView(game, interaction) # Pass the interaction so we can edit it later
     )
 
+# --- Deck Management Commands ---
+
+deck_group = app_commands.Group(name="deck", description="Manage your custom deck", guild=TEST_GUILD)
+
+@deck_group.command(name="view", description="View your current custom deck")
+async def deck_view(interaction: discord.Interaction):
+    deck = load_user_deck(interaction.user.id)
+    if not deck["spirits"] and not deck["spells"]:
+        await interaction.response.send_message(
+            "You don't have a custom deck. Your deck will be the default `player_deck.json`.\n"
+            "Use `/deck add` to start building one!",
+            ephemeral=True
+        )
+        return
+
+    embed = discord.Embed(title=f"{interaction.user.display_name}'s Deck", color=discord.Color.blue())
+    
+    spirit_list = "\n".join([f"{card_id}: {qty}" for card_id, qty in deck["spirits"].items()])
+    spell_list = "\n".join([f"{card_id}: {qty}" for card_id, qty in deck["spells"].items()])
+    
+    embed.add_field(name="Spirits", value=spirit_list or "None", inline=True)
+    embed.add_field(name="Spells", value=spell_list or "None", inline=True)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@deck_group.command(name="add", description="Add a card to your custom deck (max 3 copies)")
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(card_id="The ID of the card to add", quantity="How many copies to add (default 1)")
+async def deck_add(interaction: discord.Interaction, card_id: str, quantity: int = 1):
+    card_data = card_manager.get_card(card_id)
+    if not card_data:
+        await interaction.response.send_message(f"Card '{card_id}' not found in the card library.", ephemeral=True)
+        return
+
+    card_type = card_manager.get_card_type(card_id) # "spirits" or "spells"
+    deck = load_user_deck(interaction.user.id)
+    
+    current_qty = deck[card_type].get(card_id, 0)
+    new_qty = min(3, current_qty + quantity) # Enforce 3-copy limit
+    
+    deck[card_type][card_id] = new_qty
+    save_user_deck(interaction.user.id, deck)
+    
+    await interaction.response.send_message(f"Added {quantity}x {card_id}. You now have {new_qty} copies.", ephemeral=True)
+
+@deck_group.command(name="remove", description="Remove a card from your custom deck")
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(card_id="The ID of the card to remove", quantity="How many copies to remove (default 1)")
+async def deck_remove(interaction: discord.Interaction, card_id: str, quantity: int = 1):
+    card_type = card_manager.get_card_type(card_id)
+    if not card_type:
+        await interaction.response.send_message(f"Card '{card_id}' not found in the card library.", ephemeral=True)
+        return
+
+    deck = load_user_deck(interaction.user.id)
+    
+    current_qty = deck[card_type].get(card_id, 0)
+    if current_qty == 0:
+        await interaction.response.send_message(f"You don't have any '{card_id}' in your deck.", ephemeral=True)
+        return
+
+    new_qty = max(0, current_qty - quantity)
+    
+    if new_qty == 0:
+        del deck[card_type][card_id]
+    else:
+        deck[card_type][card_id] = new_qty
+        
+    save_user_deck(interaction.user.id, deck)
+    await interaction.response.send_message(f"Removed {quantity}x {card_id}. You have {new_qty} remaining.", ephemeral=True)
+
+@deck_group.command(name="reset", description="Delete your custom deck and revert to the default deck")
+async def deck_reset(interaction: discord.Interaction):
+    deck_path = get_user_deck_path(interaction.user.id)
+    if os.path.exists(deck_path):
+        os.remove(deck_path)
+        await interaction.response.send_message("Your custom deck has been deleted. You will now use the default player deck.", ephemeral=True)
+    else:
+        await interaction.response.send_message("You don't have a custom deck to delete.", ephemeral=True)
+
+bot.tree.add_command(deck_group)
+
 # --- Admin Commands ---
 
-@bot.tree.command(name="shutdown", description="[Admin] Shuts down the bot.", guild=TEST_GUILD) # <-- Sync to test guild
-@is_admin() # <-- Use the custom admin check
+admin_group = app_commands.Group(name="admin", description="Admin-only commands", guild=TEST_GUILD, default_permissions=discord.Permissions(administrator=True))
+
+@admin_group.command(name="addspirit", description="[Admin] Add a new spirit to the card library")
+@is_admin()
+@app_commands.describe(
+    card_id="The unique ID (e.g., 'fire_lizard')",
+    name="The display name (e.g., 'Fire Lizard')",
+    cost="Activation cost (Aether)",
+    power="Attack power",
+    defense="Defense value",
+    hp="Health points",
+    effect="Card effect text (optional)"
+)
+async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, cost: int, power: int, defense: int, hp: int, effect: str = ""):
+    if card_manager.get_card(card_id):
+        await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists!", ephemeral=True)
+        return
+
+    new_card_data = {
+        "name": name,
+        "activation_cost": cost,
+        "power": power,
+        "defense": defense,
+        "hp": hp,
+        "effect": effect
+    }
+    
+    card_manager.update_card(card_id, new_card_data, "spirits")
+    await interaction.response.send_message(f"Successfully added spirit: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
+
+@admin_group.command(name="addspell", description="[Admin] Add a new spell to the card library")
+@is_admin()
+@app_commands.describe(
+    card_id="The unique ID (e.g., 'ice_blast')",
+    name="The display name (e.g., 'Ice Blast')",
+    cost="Activation cost (Aether)",
+    effect="Card effect text",
+    scaling="Damage/Heal/etc. value (optional)"
+)
+async def add_spell(interaction: discord.Interaction, card_id: str, name: str, cost: int, effect: str, scaling: int = 0):
+    if card_manager.get_card(card_id):
+        await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists!", ephemeral=True)
+        return
+
+    new_card_data = {
+        "name": name,
+        "activation_cost": cost,
+        "effect": effect,
+        "scaling": scaling
+    }
+    
+    card_manager.update_card(card_id, new_card_data, "spells")
+    await interaction.response.send_message(f"Successfully added spell: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
+
+@admin_group.command(name="shutdown", description="[Admin] Shuts down the bot.")
+@is_admin()
 async def shutdown(interaction: discord.Interaction):
     """Admin-only command to shut down the bot."""
     await interaction.response.send_message("Shutting down...", ephemeral=True)
@@ -415,6 +594,8 @@ async def shutdown_error(interaction: discord.Interaction, error: app_commands.A
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
     else:
         await interaction.response.send_message(f"An error occurred: {error}", ephemeral=True)
+
+bot.tree.add_command(admin_group)
 
 
 # --- Run the Bot ---
