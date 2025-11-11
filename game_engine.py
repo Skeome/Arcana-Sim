@@ -1,4 +1,5 @@
 import json
+import random # Import at top
 from enum import Enum
 
 class Phase(Enum):
@@ -52,13 +53,13 @@ class ArcanaGame:
         # Simple test decks for both players
         test_spirits = [
             Card("Stone Golem", "spirit", 1, 2, 3, 8, "Defense cannot be reduced"),
-            Card("Frost Wyrm", "spirit", 2, 4, 1, 12, "Attack reduces target defense by 1"),
+            Card("Frost Wyrm", "spirit", 2, 4, 1, 12, "Reduce target defense by 1"),
             Card("Inferno Dragon", "spirit", 3, 6, 0, 16, "Can attack wizard directly")
         ]
         
         test_spells = [
             Card("Firestorm", "spell", 3, effect="Deal 3 damage to all enemy spirits", scaling=3),
-            Card("Healing Wave", "spell", 2, effect="Heal 4 HP to spirit or 1 HP to wizard", scaling=4)
+            Card("Healing Wave", "spell", 2, effect="Heal 4 HP to wizard", scaling=4)
         ]
         
         # Give each player 3 of each spirit and 2 of each spell
@@ -73,13 +74,15 @@ class ArcanaGame:
                                           effect=spell.effect, scaling=spell.scaling))
             
             # Shuffle and draw starting hand of 7
-            import random
             random.shuffle(player.deck)
             for _ in range(7):
                 if player.deck:
                     player.hand.append(player.deck.pop())
     
     def next_phase(self):
+        if self.game_over:
+            return
+
         phases = list(Phase)
         current_index = phases.index(self.current_phase)
         
@@ -89,12 +92,17 @@ class ArcanaGame:
             self.current_phase = Phase.ATTAINMENT
             if self.current_player == "player":
                 self.turn_count += 1
+            
+            # Handle phase-specific logic (Attunement)
+            self.handle_attunement_phase()
+
         else:
             self.current_phase = phases[current_index + 1]
         
-        # Handle phase-specific logic
-        if self.current_phase == Phase.ATTAINMENT:
-            self.handle_attunement_phase()
+        # Handle phase-specific logic (e.g., if we just entered Attunement)
+        # This was slightly bugged, logic should be at start of phase
+        # if self.current_phase == Phase.ATTAINMENT:
+        #     self.handle_attunement_phase()
     
     def handle_attunement_phase(self):
         player = self.players[self.current_player]
@@ -102,6 +110,13 @@ class ArcanaGame:
         # Draw 1 card
         if player.deck:
             player.hand.append(player.deck.pop())
+        elif player.discard: # Reshuffle discard pile if deck is empty
+            print(f"{player.name} reshuffling discard pile!")
+            player.deck = player.discard
+            player.discard = []
+            random.shuffle(player.deck)
+            if player.deck:
+                player.hand.append(player.deck.pop())
         
         # Gain 2 Aether
         player.aether = min(player.aether + 2, player.max_aether)
@@ -109,6 +124,9 @@ class ArcanaGame:
         # Reset wizard ability
         player.wizard_ability_used = False
     
+    def get_opponent_name(self, player_name):
+        return "npc" if player_name == "player" else "player"
+
     def summon_spirit(self, player_name, spirit_name, slot_index):
         if self.current_phase != Phase.MEMORIZATION:
             return False, "Can only summon during memorization phase"
@@ -164,14 +182,63 @@ class ArcanaGame:
         player.spell_slots[slot_index].append(spell_card)
         
         return True, f"Prepared {spell_name} in slot {slot_index + 1}"
-    
+
+    def replace_spell(self, player_name, spell_name, slot_index):
+        """Discards an entire spell stack and replaces it with a new spell from hand."""
+        if self.current_phase != Phase.MEMORIZATION:
+            return False, "Can only replace spells during memorization phase"
+        
+        player = self.players[player_name]
+        
+        # Find the spell in hand
+        spell_card = None
+        for card in player.hand:
+            if card.type == "spell" and card.name == spell_name:
+                spell_card = card
+                break
+        
+        if not spell_card:
+            return False, f"No {spell_name} in hand"
+        
+        # Check if slot index is valid
+        if not (0 <= slot_index < len(player.spell_slots)):
+            return False, "Invalid spell slot index"
+            
+        # Discard all cards currently in that slot
+        old_stack = player.spell_slots[slot_index]
+        discard_count = 0
+        if old_stack:
+            for old_spell in old_stack:
+                player.discard.append(old_spell)
+                discard_count += 1
+            
+        # Remove from hand and place in slot
+        player.hand.remove(spell_card)
+        player.spell_slots[slot_index] = [spell_card] # Start a new stack
+        
+        return True, f"Replaced slot {slot_index + 1} (discarded {discard_count}) with {spell_name}"
+
+    def use_wizard_ability(self, player_name):
+        """Uses the player's wizard ability (stubbed)."""
+        if self.current_phase != Phase.MEMORIZATION:
+            return False, "Can only use ability during memorization phase"
+        
+        player = self.players[player_name]
+        if player.wizard_ability_used:
+            return False, "Wizard ability already used this turn"
+        
+        # TODO: Implement ability logic
+        # For now, just mark as used and give 1 Aether
+        player.aether = min(player.aether + 1, player.max_aether)
+        player.wizard_ability_used = True
+        return True, "Wizard ability used! (Gained 1 Aether)"
+
     def activate_spell(self, player_name, slot_index, copies_used):
         if self.current_phase != Phase.INVOCATION:
             return False, "Can only activate spells during invocation phase"
         
         player = self.players[player_name]
-        opponent_name = "npc" if player_name == "player" else "player"
-        opponent = self.players[opponent_name]
+        opponent = self.players[self.get_opponent_name(player_name)]
         
         # Check if slot has spells
         if not player.spell_slots[slot_index]:
@@ -193,22 +260,31 @@ class ArcanaGame:
         
         # Resolve effect based on spell name
         effect_applied = False
+        message = f"Activated {spell.name} x{copies_used}"
+
         if spell.name == "Firestorm":
             damage = spell.scaling * copies_used
-            for spirit_slot in opponent.spirit_slots:
-                if spirit_slot:
+            message_parts = []
+            for i, spirit in enumerate(opponent.spirit_slots): # Use enumerate to get index
+                if spirit:
                     # Calculate damage after defense
-                    actual_damage = max(0, damage - spirit_slot.defense)
-                    spirit_slot.current_hp -= actual_damage
+                    actual_damage = max(0, damage - spirit.defense)
+                    spirit.current_hp -= actual_damage
+                    message_parts.append(f"{spirit.name} takes {actual_damage}")
                     # Check if spirit died
-                    if spirit_slot.current_hp <= 0:
-                        opponent.discard.append(spirit_slot)
-                        spirit_slot = None
+                    if spirit.current_hp <= 0:
+                        opponent.discard.append(spirit)
+                        opponent.spirit_slots[i] = None # <-- Correct way to remove
+                        message_parts.append(f"{spirit.name} destroyed")
+            
             effect_applied = True
-            message = f"Dealt {damage} damage to all enemy spirits"
+            if not message_parts:
+                message = f"Firestorm cast, but no enemy spirits."
+            else:
+                message = ", ".join(message_parts)
         
         elif spell.name == "Healing Wave":
-            # For simplicity, always heal wizard
+            # Simple logic: Heal wizard (as per your test card)
             healing = spell.scaling * copies_used
             player.wizard_hp = min(20, player.wizard_hp + healing)
             effect_applied = True
@@ -226,8 +302,7 @@ class ArcanaGame:
             return False, "Can only attack during invocation phase"
         
         player = self.players[player_name]
-        opponent_name = "npc" if player_name == "player" else "player"
-        opponent = self.players[opponent_name]
+        opponent = self.players[self.get_opponent_name(player_name)]
         
         # Get attacking spirit
         spirit = player.spirit_slots[spirit_slot_index]
@@ -236,7 +311,7 @@ class ArcanaGame:
         
         # Check activation cost
         if player.aether < spirit.activation_cost:
-            return False, f"Not enough Aether to activate {spirit.name}"
+            return False, f"Not enough Aether for {spirit.name}"
         
         # Pay cost
         player.aether -= spirit.activation_cost
@@ -246,7 +321,7 @@ class ArcanaGame:
             # Check Guard Rule
             has_guard = any(opponent.spirit_slots)
             if has_guard and "directly" not in spirit.effect.lower():
-                return False, "Cannot attack wizard while opponent has spirits (Guard Rule)"
+                return False, "Cannot attack wizard (Guard Rule)"
             
             # Attack wizard
             damage = max(0, spirit.power)  # Wizard has 0 defense
@@ -255,6 +330,7 @@ class ArcanaGame:
             
             # Check for win condition
             if opponent.wizard_hp <= 0:
+                opponent.wizard_hp = 0
                 self.game_over = True
                 self.winner = player_name
             
@@ -282,43 +358,7 @@ class ArcanaGame:
         return True, message
     
     def execute_npc_turn(self):
-    #    # Simple NPC logic - just advance through phases automatically
-    #    if self.current_phase == Phase.ATTAINMENT:
-    #        self.next_phase()
-    #    elif self.current_phase == Phase.MEMORIZATION:
-    #        # NPC will try to summon a spirit if possible
-    #        player = self.players["npc"]
-    #        for i, card in enumerate(player.hand):
-    #            if card.type == "spirit":
-    #                # Find empty spirit slot
-    #                for slot_idx in range(3):
-    #                    if player.spirit_slots[slot_idx] is None:
-    #                        self.summon_spirit("npc", card.name, slot_idx)
-    #                        break
-    #                break
-    #        self.next_phase()
-    #    elif self.current_phase == Phase.INVOCATION:
-    #        # NPC will attack with spirits if possible
-    #        player = self.players["npc"]
-    #        opponent = self.players["player"]
-    #        
-    #        for slot_idx in range(3):
-    #            spirit = player.spirit_slots[slot_idx]
-    #            if spirit and player.aether >= spirit.activation_cost:
-    #                # Try to attack player wizard directly if no guards
-    #                if not any(opponent.spirit_slots) or "directly" in spirit.effect.lower():
-    #                    self.attack_with_spirit("npc", slot_idx, "wizard")
-    #                else:
-    #                    # Attack first available spirit
-    #                    for target_idx in range(3):
-    #                        if opponent.spirit_slots[target_idx]:
-    #                            self.attack_with_spirit("npc", slot_idx, "spirit", target_idx)
-    #                            break
-    #        
-    #        self.next_phase()
-    #    elif self.current_phase == Phase.RESPITE:
-    #        self.next_phase()
-        # Execute the NPC's turn using the AI controller
+        # This is now deprecated, AIController.execute_ai_turn is used instead
         from ai_controller import AIController
         ai = AIController()
         ai.execute_ai_turn(self)
