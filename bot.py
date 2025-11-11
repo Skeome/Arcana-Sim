@@ -379,7 +379,6 @@ async def on_ready():
         if TEST_GUILD:
             print(f"Syncing commands to Test Guild (ID: {TEST_GUILD.id})...")
             # This copies global commands to the guild and syncs them.
-            bot.tree.copy_global_to_guild(TEST_GUILD)
             synced = await bot.tree.sync(guild=TEST_GUILD)
         else:
             print("Syncing commands globally (this may take an hour)...")
@@ -443,7 +442,7 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
 
 # --- Deck Management Commands ---
 
-deck_group = app_commands.Group(name="deck", description="Manage your custom deck", guild=TEST_GUILD)
+deck_group = app_commands.Group(name="deck", description="Manage your custom deck")
 
 @deck_group.command(name="view", description="View your current custom deck")
 async def deck_view(interaction: discord.Interaction):
@@ -525,7 +524,7 @@ bot.tree.add_command(deck_group)
 
 # --- Admin Commands ---
 
-admin_group = app_commands.Group(name="admin", description="Admin-only commands", guild=TEST_GUILD, default_permissions=discord.Permissions(administrator=True))
+admin_group = app_commands.Group(name="admin", description="Admin-only commands", default_permissions=discord.Permissions(administrator=True))
 
 @admin_group.command(name="addspirit", description="[Admin] Add a new spirit to the card library")
 @is_admin()
