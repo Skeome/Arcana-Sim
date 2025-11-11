@@ -67,11 +67,11 @@ class ArcanaGame:
         for player in self.players.values():
             player.deck = [] # Ensure deck is empty before adding
             for spirit in test_spirits:
-                for _ in range(3):
+                for _ in range(1):
                     player.deck.append(Card(spirit.name, spirit.type, spirit.activation_cost, 
                                           spirit.power, spirit.defense, spirit.max_hp, spirit.effect))
             for spell in test_spells:
-                for _ in range(2):
+                for _ in range(3):
                     player.deck.append(Card(spell.name, spell.type, spell.activation_cost, 
                                           effect=spell.effect, scaling=spell.scaling))
             
@@ -156,7 +156,7 @@ class ArcanaGame:
         player.hand.pop(card_index_in_hand)
         player.spirit_slots[slot_index] = spirit_card
         
-        player.placed_card_this_turn = True # --- ADDED ---
+        player.placed_card_this_turn = True
         return True, f"Summoned {spirit_name} to slot {slot_index + 1}"
     
     def prepare_spell(self, player_name, spell_name, slot_index):
@@ -193,7 +193,7 @@ class ArcanaGame:
         player.hand.pop(card_index_in_hand)
         player.spell_slots[slot_index].append(spell_card)
         
-        player.placed_card_this_turn = True # --- ADDED ---
+        player.placed_card_this_turn = True
         return True, f"Prepared {spell_name} in slot {slot_index + 1}"
 
     def replace_spell(self, player_name, spell_name, slot_index):
@@ -235,7 +235,7 @@ class ArcanaGame:
         player.hand.pop(card_index_in_hand)
         player.spell_slots[slot_index] = [spell_card] # Start a new stack
         
-        player.placed_card_this_turn = True # --- ADDED ---
+        player.placed_card_this_turn = True
         return True, f"Replaced slot {slot_index + 1} (discarded {discard_count}) with {spell_name}"
 
     def use_wizard_ability(self, player_name):

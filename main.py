@@ -9,7 +9,7 @@ from ai_controller import AIController
 class ArcanaVisualizer:
     def __init__(self):
         pygame.init()
-        self.screen_width = 1300
+        self.screen_width = 1500
         self.screen_height = 900
         self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
         pygame.display.set_caption("Arcana Simulator")
@@ -76,8 +76,8 @@ class ArcanaVisualizer:
 
     def draw_player_side(self):
         player = self.game.players["player"]
-        slot_width = 140
-        slot_height = 110
+        slot_width = 160
+        slot_height = 130
         gap = 30
         
         # --- ROW 1: SPIRIT FIELD (Front Row - Closer to Center) ---
@@ -107,7 +107,7 @@ class ArcanaVisualizer:
                 self.draw_text(f"Spirit [{i+1}]", x+5, y+5)
 
         # --- ROW 2: SPELL FIELD (Back Row - Further from Center) ---
-        spell_y = 640
+        spell_y = 660
         spell_x_start = self.get_centered_start_x(4, slot_width, gap)
 
         for i in range(4):
@@ -121,15 +121,15 @@ class ArcanaVisualizer:
             is_valid_activate_slot = self.input_mode == "ACTIVATE_SLOT" and player.spell_slots[i]
 
             if is_valid_prepare_slot or is_valid_activate_slot:
-                 pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, slot_width+6, 106), border_radius=5)
+                 pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, slot_width+6, 126), border_radius=5)
 
-            pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, slot_width, 100), border_radius=5)
+            pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, slot_width, 120), border_radius=5)
             spell_stack = player.spell_slots[i]
             if spell_stack:
                 spell = spell_stack[0]
                 self.draw_text(f"[{i+1}] {spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True, max_width=130)
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True, max_width=150)
             else:
                 self.draw_text(f"Spell [{i+1}]", x+5, y+5)
 
@@ -144,7 +144,7 @@ class ArcanaVisualizer:
         self.draw_text(aether_text, 310, track_y+5)
 
         # --- Draw player hand (Moved from draw_game_info) ---
-        hand_x = 1050
+        hand_x = 1200
         hand_y_start = 500 # Align with top of spirit slots
         
         self.draw_text("Player Hand:", hand_x, hand_y_start)
@@ -165,8 +165,8 @@ class ArcanaVisualizer:
 
     def draw_npc_side(self):
         npc = self.game.players["npc"]
-        slot_width = 140
-        slot_height = 110
+        slot_width = 160
+        slot_height = 130
         gap = 30
 
         # --- ROW 1: SPELL FIELD (Back Row - Furthest from Center/Top of screen) ---
@@ -180,13 +180,13 @@ class ArcanaVisualizer:
         for i in range(4):
             x = spell_x_start + i * (slot_width + gap)
             y = spell_y
-            pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, slot_width, 100), border_radius=5)
+            pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, slot_width, 120), border_radius=5)
             spell_stack = npc.spell_slots[i]
             if spell_stack:
                 spell = spell_stack[0]
                 self.draw_text(f"[{i+1}] {spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True, max_width=130)
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True, max_width=150)
             else:
                 self.draw_text(f"Spell [{i+1}]", x+5, y+5)
 
@@ -239,7 +239,7 @@ class ArcanaVisualizer:
         # --- (This section has been removed and moved to draw_player_side) ---
 
         # Draw last message
-        self.draw_text(f"Log: {self.last_message}", 440, 820, color=self.colors['log_text'], wrap=True, max_width=900) # --- Adjusted Y from 850 to 880 and X from 300 to 50 ---
+        self.draw_text(f"Log: {self.last_message}", 440, 820, color=self.colors['log_text'], wrap=True, max_width=700)
 
     def draw_text(self, text, x, y, color=None, wrap=False, max_width=110):
         if color is None:
