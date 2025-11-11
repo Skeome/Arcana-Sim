@@ -239,7 +239,7 @@ class ArcanaVisualizer:
         # --- (This section has been removed and moved to draw_player_side) ---
 
         # Draw last message
-        self.draw_text(f"Log: {self.last_message}", 50, 880, color=self.colors['log_text'], wrap=True, max_width=900) # --- Adjusted Y from 850 to 880 and X from 300 to 50 ---
+        self.draw_text(f"Log: {self.last_message}", 440, 820, color=self.colors['log_text'], wrap=True, max_width=900) # --- Adjusted Y from 850 to 880 and X from 300 to 50 ---
 
     def draw_text(self, text, x, y, color=None, wrap=False, max_width=110):
         if color is None:
