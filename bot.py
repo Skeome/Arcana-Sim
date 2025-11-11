@@ -442,12 +442,45 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
         view=GameActionView(game, interaction) # Pass the interaction so we can edit it later
     )
 
+# --- NEW: View Card Command ---
+@bot.tree.command(name="viewcard", description="Look up a card from the library", guild=TEST_GUILD)
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(card_id="The ID of the card you want to view")
+async def viewcard(interaction: discord.Interaction, card_id: str):
+    card_data = card_manager.get_card(card_id)
+    if not card_data:
+        await interaction.response.send_message(f"Card '{card_id}' not found in the card library.", ephemeral=True)
+        return
+
+    card_type = card_manager.get_card_type(card_id)
+    
+    embed = discord.Embed(
+        title=f"[{card_data.get('name', 'Unknown')}]",
+        description=card_data.get('effect', '*No effect description.*'),
+        color=discord.Color.blue() if card_type == "spells" else discord.Color.red()
+    )
+    
+    embed.add_field(name="Card ID", value=f"`{card_id}`", inline=True)
+    embed.add_field(name="Type", value=card_type.capitalize(), inline=True)
+    embed.add_field(name="Cost", value=f"{card_data.get('activation_cost', 0)} Aether", inline=True)
+    
+    if card_type == "spirits":
+        embed.add_field(name="Power", value=card_data.get('power', 0), inline=True)
+        embed.add_field(name="Defense", value=card_data.get('defense', 0), inline=True)
+        embed.add_field(name="HP", value=card_data.get('hp', 0), inline=True)
+    else: # Spells
+        embed.add_field(name="Scaling", value=card_data.get('scaling', 0), inline=True)
+        
+    embed.set_footer(text="Use /deck to manage your cards")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 # --- Deck Management Commands ---
 
-# Define the group
+# Define the group and register it to the test guild
 deck_group = app_commands.Group(name="deck", description="Manage your custom deck")
 
-# Add commands to the group and specify the guild
+# Add commands to the group
 @deck_group.command(name="view", description="View your current custom deck")
 async def deck_view(interaction: discord.Interaction):
     deck = load_user_deck(interaction.user.id)
@@ -531,10 +564,10 @@ bot.tree.add_command(deck_group, guild=TEST_GUILD)
 
 # --- Admin Commands ---
 
-# Define the group
+# Define the group and register it to the test guild
 admin_group = app_commands.Group(name="admin", description="Admin-only commands", default_permissions=discord.Permissions(administrator=True))
 
-# Add commands to the group and specify the guild
+# Add commands to the group
 @admin_group.command(name="addspirit", description="[Admin] Add a new spirit to the card library")
 @is_admin()
 @app_commands.describe(
