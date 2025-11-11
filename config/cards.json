@@ -1,0 +1,42 @@
+{
+  "spirits": {
+    "stone_golem": {
+      "name": "Stone Golem",
+      "activation_cost": 1,
+      "power": 2,
+      "defense": 3,
+      "hp": 8,
+      "effect": "Defense cannot be reduced"
+    },
+    "frost_wyrm": {
+      "name": "Frost Wyrm",
+      "activation_cost": 2, 
+      "power": 4,
+      "defense": 1,
+      "hp": 12,
+      "effect": "Attack reduces target defense by 1"
+    },
+    "inferno_dragon": {
+      "name": "Inferno Dragon",
+      "activation_cost": 3,
+      "power": 6, 
+      "defense": 0,
+      "hp": 16,
+      "effect": "Can attack wizard directly"
+    }
+  },
+  "spells": {
+    "firestorm": {
+      "name": "Firestorm", 
+      "activation_cost": 3,
+      "effect": "Deal 3 damage to all enemy spirits",
+      "scaling": 3
+    },
+    "healing_wave": {
+      "name": "Healing Wave",
+      "activation_cost": 2,
+      "effect": "Heal 4 HP to spirit or 1 HP to wizard", 
+      "scaling": 4
+    }
+  }
+}
