@@ -143,6 +143,25 @@ class ArcanaVisualizer:
         aether_text = f"Aether: {player.aether}/16"
         self.draw_text(aether_text, 310, track_y+5)
 
+        # --- Draw player hand (Moved from draw_game_info) ---
+        hand_x = 1050
+        hand_y_start = 500 # Align with top of spirit slots
+        
+        self.draw_text("Player Hand:", hand_x, hand_y_start)
+        
+        for i, card in enumerate(player.hand):
+            hand_text = f"[{i+1}] {card.name} ({card.type})"
+            hand_y = hand_y_start + 30 + i * 20 # Start list 30px below title
+
+            # Highlight logic
+            is_valid_card = (self.input_mode == "SUMMON_CARD" and card.type == "spirit") or \
+                            (self.input_mode == "PREPARE_CARD" and card.type == "spell")
+
+            if is_valid_card:
+                self.draw_text(hand_text, hand_x, hand_y, color=self.colors['highlight'])
+            else:
+                self.draw_text(hand_text, hand_x, hand_y)
+
 
     def draw_npc_side(self):
         npc = self.game.players["npc"]
@@ -217,23 +236,10 @@ class ArcanaVisualizer:
             self.draw_text(commands, 50, 850)
 
         # Draw player hand
-        hand_x = 1050
-        self.draw_text("Player Hand:", hand_x, 50)
-        player = self.game.players["player"]
-        for i, card in enumerate(player.hand):
-            hand_text = f"[{i+1}] {card.name} ({card.type})"
-
-            # --- NEW: Highlight valid cards in hand ---
-            is_valid_card = (self.input_mode == "SUMMON_CARD" and card.type == "spirit") or \
-                            (self.input_mode == "PREPARE_CARD" and card.type == "spell")
-
-            if is_valid_card:
-                self.draw_text(hand_text, hand_x, 80 + i * 20, color=self.colors['highlight'])
-            else:
-                self.draw_text(hand_text, hand_x, 80 + i * 20)
+        # --- (This section has been removed and moved to draw_player_side) ---
 
         # Draw last message
-        self.draw_text(f"Log: {self.last_message}", 440, 820, color=self.colors['log_text'], wrap=True, max_width=700)
+        self.draw_text(f"Log: {self.last_message}", 50, 880, color=self.colors['log_text'], wrap=True, max_width=900) # --- Adjusted Y from 850 to 880 and X from 300 to 50 ---
 
     def draw_text(self, text, x, y, color=None, wrap=False, max_width=110):
         if color is None:
