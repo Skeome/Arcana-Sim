@@ -9,7 +9,7 @@ from ai_controller import AIController
 class ArcanaVisualizer:
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((1200, 800))
+        self.screen = pygame.display.set_mode((1300, 900)) # --- Made canvas bigger ---
         pygame.display.set_caption("Arcana Simulator")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont('Noto-Sans', 18, bold=False, italic=False)
@@ -60,26 +60,26 @@ class ArcanaVisualizer:
         # Draw Game Over
         if self.game.game_over:
             self.draw_text(f"GAME OVER - {self.game.winner.upper()} WINS!", 400, 350, color=self.colors['game_over'])
-            self.draw_text("Press [R] to play again", 400, 380, color=self.colors['game_over'])
+            self.draw_text("Press [R] to play again", 400, 380, color=self.colors['game_over']) # <-- Changed [6] to [R]
 
         pygame.display.flip()
 
     def draw_player_side(self):
         player = self.game.players["player"]
-        x_start = 250
+        x_start = 300 # --- Adjusted start position ---
 
         # Player HP and Aether tracks
-        pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 650, 200, 30))
+        pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 750, 200, 30)) # --- Adjusted Y ---
         hp_text = f"HP: {player.wizard_hp}/20"
-        self.draw_text(hp_text, 60, 655)
+        self.draw_text(hp_text, 60, 755) # --- Adjusted Y ---
 
-        pygame.draw.rect(self.screen, self.colors['aether_track'], (300, 650, 200, 30))
+        pygame.draw.rect(self.screen, self.colors['aether_track'], (300, 750, 200, 30)) # --- Adjusted Y ---
         aether_text = f"Aether: {player.aether}/16"
-        self.draw_text(aether_text, 310, 655)
+        self.draw_text(aether_text, 310, 755) # --- Adjusted Y ---
 
         # Player Spirit Slots (3)
         for i in range(3):
-            x, y = x_start + i * 160, 450
+            x, y = x_start + i * 170, 500 # --- Adjusted spacing and Y ---
             # --- NEW: Highlight valid slots ---
             is_valid_target = (self.input_mode == "SUMMON_SLOT" and player.spirit_slots[i] is None) or \
                               (self.input_mode == "ATTACK_TARGET_SPIRIT" and self.game.players["npc"].spirit_slots[i] is not None) # Whoops, this is NPC
@@ -88,9 +88,9 @@ class ArcanaVisualizer:
             is_valid_attacker_slot = (self.input_mode == "ATTACK_SLOT" and player.spirit_slots[i] is not None and player.aether >= player.spirit_slots[i].activation_cost)
 
             if is_valid_summon_slot or is_valid_attacker_slot:
-                pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 126, 106), border_radius=5)
+                pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 146, 116), border_radius=5) # --- Made bigger ---
             
-            pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 120, 100), border_radius=5)
+            pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 140, 110), border_radius=5) # --- Made bigger ---
             spirit = player.spirit_slots[i]
             if spirit:
                 self.draw_text(f"[{i+1}] {spirit.name}", x+5, y+5)
@@ -102,7 +102,7 @@ class ArcanaVisualizer:
 
         # Player Spell Slots (4)
         for i in range(4):
-            x, y = x_start + i * 160, 560
+            x, y = x_start + i * 170, 620 # --- Adjusted spacing and Y ---
             
             # --- NEW: Highlight valid slots ---
             is_valid_prepare_slot = self.input_mode == "PREPARE_SLOT" and \
@@ -112,22 +112,22 @@ class ArcanaVisualizer:
             is_valid_activate_slot = self.input_mode == "ACTIVATE_SLOT" and player.spell_slots[i]
 
             if is_valid_prepare_slot or is_valid_activate_slot:
-                 pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 126, 86), border_radius=5)
+                 pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 146, 106), border_radius=5) # --- Made bigger ---
 
-            pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 120, 80), border_radius=5)
+            pygame.draw.rect(self.screen, self.colors['player_slots'], (x, y, 140, 100), border_radius=5) # --- Made bigger ---
             spell_stack = player.spell_slots[i]
             if spell_stack:
                 spell = spell_stack[0]
                 self.draw_text(f"[{i+1}] {spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True)
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True, max_width=130) # --- Set correct max_width ---
             else:
                 self.draw_text(f"[Slot {i+1}]", x+5, y+5)
 
 
     def draw_npc_side(self):
         npc = self.game.players["npc"]
-        x_start = 250
+        x_start = 300 # --- Adjusted start position ---
 
         # NPC HP and Aether
         pygame.draw.rect(self.screen, self.colors['hp_track'], (50, 50, 200, 30))
@@ -140,15 +140,15 @@ class ArcanaVisualizer:
 
         # NPC Spirit Slots (3)
         for i in range(3):
-            x, y = x_start + i * 160, 150
+            x, y = x_start + i * 170, 150 # --- Adjusted spacing ---
             
             # --- NEW: Highlight valid attack targets ---
             is_valid_target = (self.input_mode == "ATTACK_TARGET" and npc.spirit_slots[i] is not None)
 
             if is_valid_target:
-                pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 126, 106), border_radius=5)
+                pygame.draw.rect(self.screen, self.colors['highlight'], (x-3, y-3, 146, 116), border_radius=5) # --- Made bigger ---
 
-            pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 120, 100), border_radius=5)
+            pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 140, 110), border_radius=5) # --- Made bigger ---
             spirit = npc.spirit_slots[i]
             if spirit:
                 self.draw_text(f"[{i+1}] {spirit.name}", x+5, y+5)
@@ -160,31 +160,31 @@ class ArcanaVisualizer:
 
         # NPC Spell Slots (4)
         for i in range(4):
-            x, y = x_start + i * 160, 260
-            pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 120, 80), border_radius=5)
+            x, y = x_start + i * 170, 270 # --- Adjusted spacing and Y ---
+            pygame.draw.rect(self.screen, self.colors['npc_slots'], (x, y, 140, 100), border_radius=5) # --- Made bigger ---
             spell_stack = npc.spell_slots[i]
             if spell_stack:
                 spell = spell_stack[0]
                 self.draw_text(f"[{i+1}] {spell.name} x{len(spell_stack)}", x+5, y+5)
                 self.draw_text(f"Cost: {spell.activation_cost}", x+5, y+25)
-                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True)
+                self.draw_text(f"{spell.effect}", x+5, y+45, wrap=True, max_width=130) # --- Set correct max_width ---
             else:
                 self.draw_text(f"[Slot {i+1}]", x+5, y+5)
 
 
     def draw_game_info(self):
         phase_text = f"Turn {self.game.turn_count} - {self.game.current_player.upper()} - Phase: {self.game.current_phase.value}"
-        self.draw_text(phase_text, 50, 700)
+        self.draw_text(phase_text, 50, 800) # --- Adjusted Y ---
 
         # --- MODIFIED: Show contextual prompt ---
         if self.action_prompt:
-             self.draw_text(self.action_prompt, 50, 720, color=self.colors['prompt_text'])
+             self.draw_text(self.action_prompt, 50, 820, color=self.colors['prompt_text']) # --- Adjusted Y ---
         else:
             commands = "Actions: [1]Summon [2]Prepare [3]Activate [4]Attack [5]End Phase [R]New Game"
-            self.draw_text(commands, 50, 720)
+            self.draw_text(commands, 50, 820) # --- Adjusted Y ---
         
         # Draw player hand
-        hand_x = 950
+        hand_x = 1050 # --- Adjusted X ---
         self.draw_text("Player Hand:", hand_x, 50)
         player = self.game.players["player"]
         for i, card in enumerate(player.hand):
@@ -200,7 +200,7 @@ class ArcanaVisualizer:
                 self.draw_text(hand_text, hand_x, 80 + i * 20)
 
         # Draw last message
-        self.draw_text(f"Log: {self.last_message}", 50, 750, color=self.colors['log_text'], wrap=True, max_width=800)
+        self.draw_text(f"Log: {self.last_message}", 50, 850, color=self.colors['log_text'], wrap=True, max_width=900) # --- Adjusted Y/width ---
 
     def draw_text(self, text, x, y, color=None, wrap=False, max_width=110):
         if color is None:
@@ -211,6 +211,7 @@ class ArcanaVisualizer:
             self.screen.blit(text_surface, (x, y))
             return
 
+        # --- Word wrap logic (FIXED) ---
         words = text.split(' ')
         line_spacing = 2
         line_height = self.font.get_linesize() + line_spacing
@@ -220,17 +221,27 @@ class ArcanaVisualizer:
         
         if " " not in text:
             if self.font.size(text)[0] > max_width:
-                lines.append(text[:max_width//self.font.size('a')[0]] + '...')
+                # Simple character wrap if one word is too long
+                est_chars = max(1, max_width // self.font.size('a')[0])
+                lines.append(text[:est_chars] + '...')
             else:
                 lines.append(text)
         else:
             for word in words:
-                if self.font.size(current_line + " " + word)[0] <= max_width:
-                    current_line += " " + word
+                # --- This is the fixed logic ---
+                test_line = current_line
+                if test_line: # if not the first word on the line
+                    test_line += " " + word
                 else:
-                    lines.append(current_line.strip())
+                    test_line = word
+                
+                if self.font.size(test_line)[0] <= max_width:
+                    current_line = test_line
+                else:
+                    lines.append(current_line)
                     current_line = word
-            lines.append(current_line.strip())
+            lines.append(current_line)
+        # --- End of fix ---
         
         for i, line in enumerate(lines):
             text_surface = self.font.render(line, True, color)
@@ -252,13 +263,18 @@ class ArcanaVisualizer:
                         self.last_message = "Action canceled."
                     else:
                         return False # Quit
-                if event.key == pygame.K_r:
+                if event.key == pygame.K_r: # <-- Changed from K_6
                     self.game = ArcanaGame()
                     self.last_message = "New game started!"
                     self.reset_input_state()
                     return True # Skip rest of input handling for this frame
 
             if self.game.game_over or self.game.current_player != "player":
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_r: # <-- Added to catch reset on game over
+                    self.game = ArcanaGame()
+                    self.last_message = "New game started!"
+                    self.reset_input_state()
+                    return True
                 continue # Don't process game inputs if not player's turn or game over
 
             # --- State Machine Logic ---
