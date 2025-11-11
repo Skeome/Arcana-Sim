@@ -1,5 +1,6 @@
 import json
 import os
+from game_engine import Card # <-- Import Card here
 
 class CardManager:
     def __init__(self):
@@ -12,7 +13,6 @@ class CardManager:
             "spirits": {
                 "stone_golem": {
                     "name": "Stone Golem",
-                    "type": "spirit",
                     "activation_cost": 1,
                     "power": 2,
                     "defense": 3,
@@ -21,7 +21,6 @@ class CardManager:
                 },
                 "frost_wyrm": {
                     "name": "Frost Wyrm", 
-                    "type": "spirit",
                     "activation_cost": 2,
                     "power": 4,
                     "defense": 1,
@@ -30,7 +29,6 @@ class CardManager:
                 },
                 "inferno_dragon": {
                     "name": "Inferno Dragon",
-                    "type": "spirit",
                     "activation_cost": 3,
                     "power": 6,
                     "defense": 0, 
@@ -40,15 +38,13 @@ class CardManager:
             },
             "spells": {
                 "firestorm": {
-                    "name": "Firestorm",
-                    "type": "spell", 
+                    "name": "Firestorm", 
                     "activation_cost": 3,
                     "effect": "Deal 3 damage to all enemy spirits",
                     "scaling": 3
                 },
                 "healing_wave": {
                     "name": "Healing Wave",
-                    "type": "spell",
                     "activation_cost": 2,
                     "effect": "Heal 4 HP to spirit or 1 HP to wizard",
                     "scaling": 4
@@ -80,27 +76,42 @@ class CardManager:
         return None
     
     def create_card_instance(self, card_id):
-        card_data = self.get_card(card_id)
+        """
+        Finds a card by its ID in the library (spirits or spells)
+        and returns a new Card object instance.
+        """
+        card_data = None
+        card_type = None
+
+        # Check in spirits
+        if card_id in self.cards.get("spirits", {}):
+            card_data = self.cards["spirits"][card_id]
+            card_type = "spirit"
+        # Check in spells
+        elif card_id in self.cards.get("spells", {}):
+            card_data = self.cards["spells"][card_id]
+            card_type = "spell"
+
         if not card_data:
-            return None
+            print(f"Error: Card ID '{card_id}' not found in card library.")
+            return None # Card ID not found in library
         
-        from game_engine import Card
-        
-        if card_data["type"] == "spirit":
+        # Create instance based on type
+        if card_type == "spirit":
             return Card(
                 name=card_data["name"],
-                card_type=card_data["type"],
-                activation_cost=card_data["activation_cost"],
-                power=card_data["power"],
-                defense=card_data["defense"],
-                hp=card_data["hp"],
+                card_type=card_type,
+                activation_cost=card_data.get("activation_cost", 0),
+                power=card_data.get("power", 0),
+                defense=card_data.get("defense", 0),
+                hp=card_data.get("hp", 0),
                 effect=card_data.get("effect", "")
             )
         else:  # spell
             return Card(
                 name=card_data["name"],
-                card_type=card_data["type"],
-                activation_cost=card_data["activation_cost"],
+                card_type=card_type,
+                activation_cost=card_data.get("activation_cost", 0),
                 effect=card_data.get("effect", ""),
                 scaling=card_data.get("scaling", 0),
                 element=card_data.get("element", "")

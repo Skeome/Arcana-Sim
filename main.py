@@ -15,8 +15,12 @@ class ArcanaVisualizer:
         pygame.display.set_caption("Arcana Simulator")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont('Noto-Sans', 18, bold=False, italic=False)
-        self.game = ArcanaGame()
+        
+        # --- Create CardManager first ---
         self.card_manager = CardManager()
+        # --- Pass the manager to the game ---
+        self.game = ArcanaGame(self.card_manager) 
+        
         self.ai = AIController()
         self.last_message = "Welcome to Arcana! Your turn."
 
@@ -170,10 +174,6 @@ class ArcanaVisualizer:
         gap = 30
 
         # --- ROW 1: SPELL FIELD (Back Row - Furthest from Center/Top of screen) ---
-        # Note: In your previous code, Spell was Y=270 and Spirit Y=150.
-        # To swap them so Spirit is "Front" (closer to center/450) and Spell is "Back" (closer to 0):
-        # Spell should have small Y, Spirit should have large Y.
-        
         spell_y = 100
         spell_x_start = self.get_centered_start_x(4, slot_width, gap)
 
@@ -260,14 +260,16 @@ class ArcanaVisualizer:
 
         if " " not in text:
             if self.font.size(text)[0] > max_width:
+                # Simple character wrap if one word is too long
                 est_chars = max(1, max_width // self.font.size('a')[0])
                 lines.append(text[:est_chars] + '...')
             else:
                 lines.append(text)
         else:
             for word in words:
+                # --- This is the fixed logic ---
                 test_line = current_line
-                if test_line:
+                if test_line: # if not the first word on the line
                     test_line += " " + word
                 else:
                     test_line = word
@@ -275,9 +277,10 @@ class ArcanaVisualizer:
                 if self.font.size(test_line)[0] <= max_width:
                     current_line = test_line
                 else:
-                    lines.append(current_line)
-                    current_line = word
-            lines.append(current_line)
+                    lines.append(current_line) # Add the line *before* the new word
+                    current_line = word # Start new line with the new word
+            lines.append(current_line) # Add the last line
+        # --- End of fix ---
 
         for i, line in enumerate(lines):
             text_surface = self.font.render(line, True, color)
@@ -300,14 +303,16 @@ class ArcanaVisualizer:
                     else:
                         return False # Quit
                 if event.key == pygame.K_r:
-                    self.game = ArcanaGame()
+                    # --- Pass the manager on reset ---
+                    self.game = ArcanaGame(self.card_manager) 
                     self.last_message = "New game started!"
                     self.reset_input_state()
                     return True 
 
             if self.game.game_over or self.game.current_player != "player":
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                    self.game = ArcanaGame()
+                    # --- Pass the manager on reset ---
+                    self.game = ArcanaGame(self.card_manager) 
                     self.last_message = "New game started!"
                     self.reset_input_state()
                     return True
@@ -322,7 +327,7 @@ class ArcanaVisualizer:
                 if pygame.K_0 <= key <= pygame.K_9:
                     num_key = key - pygame.K_0
                 if pygame.K_KP0 <= key <= pygame.K_KP9:
-                    num_key = key - pygame.K_KP0
+                    num_key = key - pygame.K_KP9
 
                 # --- NORMAL MODE: Select an action ---
                 if self.input_mode == "NORMAL":

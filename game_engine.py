@@ -1,6 +1,8 @@
 import json
 import random # Import at top
+import os # <-- Import OS for file checking
 from enum import Enum
+# CardManager is no longer imported, it's passed in
 
 class Phase(Enum):
     ATTAINMENT = "attunement"
@@ -36,7 +38,7 @@ class PlayerState:
         self.placed_card_this_turn = False # --- ADDED: One card per turn rule ---
 
 class ArcanaGame:
-    def __init__(self):
+    def __init__(self, card_manager): # <-- Accept the card_manager
         self.players = {
             "player": PlayerState("player"),
             "npc": PlayerState("npc")
@@ -46,36 +48,68 @@ class ArcanaGame:
         self.turn_count = 1
         self.game_over = False
         self.winner = None
+        self.card_manager = card_manager # <-- Store the card manager
         
-        # Initialize with some test cards
-        self.initialize_test_decks()
+        # Load decks from JSON files
+        self.initialize_decks()
     
-    def initialize_test_decks(self):
-        # Simple test decks for both players
-        test_spirits = [
-            Card("Stone Golem", "spirit", 1, 2, 3, 8, "Defense cannot be reduced"),
-            Card("Frost Wyrm", "spirit", 2, 4, 1, 12, "Reduce target defense by 1"),
-            Card("Inferno Dragon", "spirit", 3, 6, 0, 16, "Can attack wizard directly")
-        ]
-        
-        test_spells = [
-            Card("Firestorm", "spell", 3, effect="Deal 3 damage to all enemy spirits", scaling=3),
-            Card("Healing Wave", "spell", 2, effect="Heal 4 HP to wizard", scaling=4)
-        ]
-        
-        # Give each player 3 of each spirit and 2 of each spell
-        for player in self.players.values():
-            player.deck = [] # Ensure deck is empty before adding
-            for spirit in test_spirits:
-                for _ in range(1):
-                    player.deck.append(Card(spirit.name, spirit.type, spirit.activation_cost, 
-                                          spirit.power, spirit.defense, spirit.max_hp, spirit.effect))
-            for spell in test_spells:
-                for _ in range(3):
-                    player.deck.append(Card(spell.name, spell.type, spell.activation_cost, 
-                                          effect=spell.effect, scaling=spell.scaling))
+    def _load_deck_from_file(self, file_path):
+        """
+        Loads a deck list from a .json file, creates card instances,
+        and returns them as a list.
+        """
+        deck = []
+        if not os.path.exists(file_path):
+            print(f"Warning: Deck file not found: {file_path}")
+            return deck
+
+        try:
+            with open(file_path, 'r') as f:
+                deck_config = json.load(f)
+
+            # Load spirits
+            for card_id, quantity in deck_config.get("spirits", {}).items():
+                for _ in range(quantity):
+                    # Use the card manager to create a full card instance from the ID
+                    card_instance = self.card_manager.create_card_instance(card_id)
+                    if card_instance:
+                        deck.append(card_instance)
+                    else:
+                        print(f"Warning: Card ID '{card_id}' not found in card library.")
             
-            # Shuffle and draw starting hand of 7
+            # Load spells
+            for card_id, quantity in deck_config.get("spells", {}).items():
+                for _ in range(quantity):
+                    # Use the card manager to create a full card instance from the ID
+                    card_instance = self.card_manager.create_card_instance(card_id)
+                    if card_instance:
+                        deck.append(card_instance)
+                    else:
+                        print(f"Warning: Card ID '{card_id}' not found in card library.")
+        
+        except Exception as e:
+            print(f"Error loading deck from {file_path}: {e}")
+
+        return deck
+
+    def initialize_decks(self):
+        """
+        Initializes player and NPC decks by loading them from their
+        respective JSON configuration files.
+        """
+        player_deck_file = "config/player_deck.json"
+        npc_deck_file = "config/npc_deck.json"
+
+        # Load decks
+        self.players["player"].deck = self._load_deck_from_file(player_deck_file)
+        self.players["npc"].deck = self._load_deck_from_file(npc_deck_file)
+        
+        # Shuffle and draw starting hands
+        for player in self.players.values():
+            if not player.deck:
+                print(f"Warning: {player.name} has no deck. Did you create the .json file?")
+                continue
+
             random.shuffle(player.deck)
             player.hand = [] # Ensure hand is empty
             for _ in range(7):
@@ -289,9 +323,10 @@ class ArcanaGame:
         effect_applied = False
         message = f"Activated {spell.name} x{copies_used}"
 
+        # --- Example of expanded effect logic ---
         if spell.name == "Firestorm":
             damage = spell.scaling * copies_used
-            message_parts = []
+            message_parts = [message] # Start with the activation message
             for i, spirit in enumerate(opponent.spirit_slots): # Use enumerate to get index
                 if spirit:
                     # Calculate damage after defense
@@ -305,22 +340,51 @@ class ArcanaGame:
                         message_parts.append(f"{spirit.name} destroyed")
             
             effect_applied = True
-            if not message_parts:
+            if len(message_parts) == 1:
                 message = f"Firestorm cast, but no enemy spirits."
             else:
                 message = ", ".join(message_parts)
         
         elif spell.name == "Healing Wave":
-            # Simple logic: Heal wizard (as per your test card)
             healing = spell.scaling * copies_used
-            player.wizard_hp = min(20, player.wizard_hp + healing)
+            # Updated effect: "Heal 4 HP to spirit and 2 HP to wizard"
+            # This is ambiguous - does it do both? Or one?
+            # Let's assume for now it just heals the wizard (simpler)
+            # We'll need a targeting system for "heal spirit"
+            player.wizard_hp = min(20, player.wizard_hp + (2 * copies_used)) # 2 HP per copy
             effect_applied = True
-            message = f"Healed {healing} HP to your wizard"
+            message = f"Healed {2 * copies_used} HP to your wizard"
+
+        elif spell.name == "Earthquake" or spell.name == "Wind Blade":
+            # Assuming these work just like Firestorm
+            damage = spell.scaling * copies_used
+            message_parts = [message]
+            for i, spirit in enumerate(opponent.spirit_slots):
+                if spirit:
+                    actual_damage = max(0, damage - spirit.defense)
+                    spirit.current_hp -= actual_damage
+                    message_parts.append(f"{spirit.name} takes {actual_damage}")
+                    if spirit.current_hp <= 0:
+                        opponent.discard.append(spirit)
+                        opponent.spirit_slots[i] = None
+                        message_parts.append(f"{spirit.name} destroyed")
+            
+            effect_applied = True
+            if len(message_parts) == 1:
+                message = f"{spell.name} cast, but no enemy spirits."
+            else:
+                message = ", ".join(message_parts)
         
-        # Remove used copies
-        for _ in range(copies_used):
-            discarded_spell = player.spell_slots[slot_index].pop()
-            player.discard.append(discarded_spell)
+        # Remove used copies from the stack
+        if effect_applied:
+            for _ in range(copies_used):
+                if player.spell_slots[slot_index]: # Check if stack is not empty
+                    discarded_spell = player.spell_slots[slot_index].pop()
+                    player.discard.append(discarded_spell)
+        else:
+            # If effect failed (e.g., no valid target), refund Aether
+            player.aether += total_cost
+            return False, f"Could not activate {spell.name} (no valid targets?)"
         
         return effect_applied, message
     
@@ -348,6 +412,8 @@ class ArcanaGame:
             # Check Guard Rule
             has_guard = any(opponent.spirit_slots)
             if has_guard and "directly" not in spirit.effect.lower():
+                # Refund cost if attack fails
+                player.aether += spirit.activation_cost
                 return False, "Cannot attack wizard (Guard Rule)"
             
             # Attack wizard
@@ -363,27 +429,38 @@ class ArcanaGame:
             
         elif target_type == "spirit":
             if not (0 <= target_index < len(opponent.spirit_slots)):
+                # Refund cost
+                player.aether += spirit.activation_cost
                 return False, "Invalid target slot"
 
             target_spirit = opponent.spirit_slots[target_index]
             if not target_spirit:
+                # Refund cost
+                player.aether += spirit.activation_cost
                 return False, "No spirit in target slot"
             
             # Calculate damage
             damage = max(0, spirit.power - target_spirit.defense)
             target_spirit.current_hp -= damage
             
-            # Handle spirit effects
-            if "reduce target defense by 1" in spirit.effect.lower():
-                target_spirit.defense = max(0, target_spirit.defense - 1)
+            message_parts = [f"{spirit.name} attacked {target_spirit.name} for {damage} damage"]
             
-            message = f"{spirit.name} attacked {target_spirit.name} for {damage} damage"
+            # Handle spirit effects
+            if "reduce" in spirit.effect.lower() and "defense" in spirit.effect.lower():
+                # Check for "Defense cannot be reduced"
+                if "cannot be reduced" not in target_spirit.effect.lower():
+                    target_spirit.defense = max(0, target_spirit.defense - 1)
+                    message_parts.append("and reduced its defense by 1")
+                else:
+                    message_parts.append("but its defense cannot be reduced")
             
             # Check if target died
             if target_spirit.current_hp <= 0:
                 opponent.discard.append(target_spirit)
                 opponent.spirit_slots[target_index] = None
-                message += f" and destroyed it"
+                message_parts.append("and destroyed it")
+            
+            message = " ".join(message_parts)
         
         return True, message
     
