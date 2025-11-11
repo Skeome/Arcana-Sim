@@ -11,5 +11,8 @@ __pycache__/
 .idea/
 .DS_Store
 
+# Generated bot files
+config/decks/
+
 #VSCode settings
 .vscode/
