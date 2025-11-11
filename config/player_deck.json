@@ -1,0 +1,13 @@
+{
+  "spirits": {
+    "stone_golem": 2,
+    "frost_wyrm": 2,
+    "inferno_dragon": 2
+  },
+  "spells": {
+    "earthquake": 3,
+    "wind_blade": 3,
+    "firestorm": 3,
+    "healing_wave": 3
+  }
+}
