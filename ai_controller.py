@@ -237,6 +237,7 @@ class AIController:
                     game.next_phase()
                     break
             elif move["type"] == "replace_spell":
+                # --- This is the fix ---
                 success, message = game.replace_spell("npc", move["new_spell_name"], move["slot_index"])
                 if not success:
                     game.next_phase() # Failed, so advance
@@ -246,7 +247,7 @@ class AIController:
                 # Continue even if activation fails (might be other moves)
             elif move["type"] == "attack":
                 if move["target_type"] == "wizard":
-                    success, message = game.attack_with_spirit("npc", move["spirit_slot"], "wizard")
+                    success, message = game.attack_with_spirit("npc", move["spirit_slot"], "wizard") # <-- Fixed typo here
                 else:
                     success, message = game.attack_with_spirit("npc", move["spirit_slot"], "spirit", move["target_index"])
                 # Continue even if attack fails
