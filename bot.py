@@ -423,6 +423,8 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
         await interaction.response.send_message("A game is already in progress in this channel!", ephemeral=True)
         return
         
+    await interaction.response.defer()
+
     # --- Start the game ---
     player1_id = interaction.user.id
     player2_id = opponent.id
@@ -435,7 +437,7 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
     board_image = generate_board_image(game)
     
     # Send the first message (which is public)
-    await interaction.response.send_message(
+    await interaction.followup.send(
         f"A game has begun between {interaction.user.mention} and {opponent.mention}!\n"
         f"Turn {game.turn_count} - {interaction.user.display_name}'s Turn - {game.current_phase.value} Phase",
         file=discord.File(board_image, "board.png"),
