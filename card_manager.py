@@ -183,3 +183,86 @@ class CardManager:
         for category in ["spirits", "spells"]:
             card_ids.extend(self.cards.get(category, {}).keys())
         return card_ids
+
+    # --- NEW: remove_card ---
+    def remove_card(self, card_id):
+        """Removes a card from the library and saves the change."""
+        card_type = self.get_card_type(card_id)
+        if not card_type:
+            return False, f"Card '{card_id}' not found."
+            
+        if card_id in self.cards[card_type]:
+            try:
+                del self.cards[card_type][card_id]
+                success = self.save_cards()
+                if success:
+                    self.load_cards() # Reload to ensure consistency
+                    return True, f"Card '{card_id}' removed."
+                else:
+                    self.load_cards() # Reload to revert any in-memory changes
+                    return False, "Failed to save changes."
+            except Exception as e:
+                self.load_cards() # Reload on error
+                return False, f"An error occurred: {e}"
+        else:
+            return False, f"Card '{card_id}' not found in '{card_type}'."
+
+    # --- NEW: update_card_field ---
+    def update_card_field(self, card_id, field_path, new_value_str):
+        """
+        Updates a specific field of a card, including nested fields (e.g., 'effects.direct_attack').
+        Tries to cast the new value to the old value's type.
+        """
+        card_type = self.get_card_type(card_id)
+        if not card_type:
+            return False, f"Card '{card_id}' not found."
+
+        try:
+            # Navigate to the target dictionary
+            target_dict = self.cards[card_type][card_id]
+            keys = field_path.split('.')
+            last_key = keys.pop()
+
+            for key in keys:
+                if key not in target_dict or not isinstance(target_dict[key], dict):
+                    return False, f"Invalid field path: '{key}' not found or not a dictionary."
+                target_dict = target_dict[key]
+
+            # Check if the final key exists
+            if last_key not in target_dict:
+                return False, f"Field '{last_key}' not found in '{card_id}'."
+
+            # Get old value to determine type
+            old_value = target_dict[last_key]
+            typed_new_value = new_value_str
+
+            # Try to cast new value to old value's type
+            if isinstance(old_value, bool):
+                if new_value_str.lower() in ['true', '1', 't', 'yes']:
+                    typed_new_value = True
+                else:
+                    typed_new_value = False
+            elif isinstance(old_value, int):
+                typed_new_value = int(new_value_str)
+            elif isinstance(old_value, float):
+                typed_new_value = float(new_value_str)
+            elif isinstance(old_value, str):
+                typed_new_value = str(new_value_str) # It's already a string, but good to be explicit
+            
+            # Update the value
+            target_dict[last_key] = typed_new_value
+            
+            # Save and reload
+            success = self.save_cards()
+            if success:
+                self.load_cards()
+                return True, f"Updated '{field_path}' to '{typed_new_value}'."
+            else:
+                self.load_cards() # Revert
+                return False, "Failed to save changes."
+
+        except ValueError:
+            return False, f"Type mismatch: Could not convert '{new_value_str}' to {type(old_value)}."
+        except Exception as e:
+            self.load_cards() # Revert on any error
+            return False, f"An error occurred: {e}"

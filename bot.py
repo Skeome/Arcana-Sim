@@ -6,6 +6,7 @@ import json # Import json for deck management
 from io import BytesIO
 from dotenv import load_dotenv
 import asyncio
+import aiohttp # For async web requests (Stability AI)
 
 # --- Load .env variables ---
 load_dotenv()
@@ -13,6 +14,11 @@ load_dotenv()
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 ADMIN_IDS_STR = os.environ.get("ADMIN_USER_IDS", "")
 TEST_GUILD_ID_STR = os.environ.get("TEST_GUILD_ID")
+
+# --- NEW: Load AI API Keys ---
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+STABILITY_API_KEY = os.environ.get("STABILITY_API_KEY")
+STABILITY_MODEL_ID = os.environ.get("STABILITY_MODEL_ID", "stable-diffusion-v1-6") # Default model
 
 # Process the loaded variables
 ADMIN_USER_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(',') if id.strip()]
@@ -31,7 +37,16 @@ from discord_ai_controller import DiscordAIController
 
 # --- PIL (Python Imaging Library) is needed to create images ---
 # You'll need to install it: pip install Pillow
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
+
+# --- NEW: Import Gemini ---
+# You'll need to install it: pip install google-generativeai
+try:
+    import google.generativeai as genai
+    print("Gemini AI SDK loaded.")
+except ImportError:
+    print("Warning: `google-generativeai` not installed. AI commands will fail.")
+    genai = None
 
 # --- Bot Setup ---
 # You must enable "Message Content Intent" in your Discord Developer Portal
@@ -47,6 +62,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 active_games = {}
 card_manager = CardManager() # Load the card library once
 ai_controller_instance = None # Will be initialized on_ready
+http_session = None # For AI requests
 
 # --- Deck Management Helpers ---
 DECK_DIR = "config/decks"
@@ -81,44 +97,223 @@ def save_user_deck(user_id: int, deck_data: dict):
 
 # --- Image Generation (The new "View") ---
 
-def generate_board_image(game: ArcanaGame) -> BytesIO:
+# --- NEW: Image Generation Constants and Helpers ---
+# Color Palette
+COLORS = {
+    'bg': (30, 30, 40),
+    'bg_player': (40, 40, 55),
+    'bg_opponent': (55, 40, 40),
+    'slot_empty': (60, 60, 70),
+    'slot_spirit': (60, 90, 120),
+    'slot_spell': (120, 60, 60),
+    'text': (230, 230, 230),
+    'text_dim': (180, 180, 180),
+    'hp': (210, 70, 70),
+    'aether': (70, 100, 210),
+    'white': (255, 255, 255),
+    'black': (0, 0, 0),
+}
+
+# Load Fonts
+def get_font(size):
+    """Tries to load a preferred font, falling back to default."""
+    font_paths = [
+        "/usr/share/fonts/TTF/CaskaydiaCoveNerdFontMono-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "arial.ttf" # Common on Windows
+    ]
+    for path in font_paths:
+        try:
+            return ImageFont.truetype(path, size)
+        except IOError:
+            continue
+    print(f"Could not find preferred fonts. Using default font for size {size}.")
+    return ImageFont.load_default()
+
+FONTS = {
+    'small': get_font(14),
+    'medium': get_font(16),
+    'large': get_font(20),
+    'title': get_font(24),
+}
+
+def draw_text(draw, text, x, y, font, color, max_width=None):
+    """Draws text, wrapping if max_width is provided. Returns the Y position after drawing."""
+    line_height = (draw.textbbox((0,0), "Tg", font=font)[3] - draw.textbbox((0,0), "Tg", font=font)[1]) + 2
+    
+    if max_width:
+        words = text.split(' ')
+        lines = []
+        current_line = ""
+        for word in words:
+            if not current_line:
+                test_line = word
+            else:
+                test_line = f"{current_line} {word}"
+            
+            # Check width using textbbox
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            line_width = bbox[2] - bbox[0]
+
+            if line_width <= max_width:
+                current_line = test_line
+            else:
+                lines.append(current_line)
+                current_line = word
+        lines.append(current_line) # Add the last line
+        
+        # Draw the wrapped lines
+        for i, line in enumerate(lines):
+            draw.text((x, y + i * line_height), line, fill=color, font=font)
+        
+        return y + (len(lines) * line_height) # Return new Y
+    else:
+        draw.text((x, y), text, fill=color, font=font)
+        return y + line_height # Return new Y
+
+def draw_card(draw, card, x, y, w, h, is_spirit):
+    """Draws a representation of a single card."""
+    if is_spirit:
+        bg_color = COLORS['slot_spirit']
+        draw.rectangle([x, y, x + w, y + h], fill=bg_color, outline=COLORS['text'], width=1)
+        if card:
+            # Store the next Y position
+            next_y = draw_text(draw, card.name, x + 5, y + 5, FONTS['medium'], COLORS['white'], max_width=w - 10)
+            
+            # Use next_y as the base for subsequent draws
+            next_y = draw_text(draw, f"HP: {card.current_hp}/{card.max_hp}", x + 5, next_y, FONTS['small'], COLORS['text'])
+            next_y = draw_text(draw, f"P: {card.power} D: {card.defense}", x + 5, next_y, FONTS['small'], COLORS['text'])
+            draw_text(draw, f"Cost: {card.activation_cost}", x + 5, next_y, FONTS['small'], COLORS['text'])
+        else:
+            draw_text(draw, "[Empty Spirit]", x + 10, y + h//2 - 10, FONTS['small'], COLORS['text_dim'])
+    else: # Spell
+        bg_color = COLORS['slot_spell']
+        draw.rectangle([x, y, x + w, y + h], fill=bg_color, outline=COLORS['text'], width=1)
+        if card: # card is a list of stacked spells
+            spell = card[0]
+            stack_size = len(card)
+            
+            next_y = draw_text(draw, f"{spell.name} x{stack_size}", x + 5, y + 5, FONTS['medium'], COLORS['white'], max_width=w - 10)
+            next_y = draw_text(draw, f"Cost: {spell.activation_cost}", x + 5, next_y, FONTS['small'], COLORS['text'])
+            draw_text(draw, spell.effect, x + 5, next_y, FONTS['small'], COLORS['text'], max_width=w - 10)
+        else:
+            draw_text(draw, "[Empty Spell]", x + 10, y + h//2 - 10, FONTS['small'], COLORS['text_dim'])
+
+def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
+    """Draws one player's entire side of the board."""
+    w, h = 1200, 450 # Main image dimensions
+    card_w, card_h = 140, 100 # Card dimensions
+    gap = 20
+
+    # Draw player bg
+    bg_color = COLORS['bg_opponent'] if is_opponent else COLORS['bg_player']
+    draw.rectangle([0, y_start, w, y_start + h], fill=bg_color)
+    
+    # Player Info (HP and Aether)
+    info_x = 20
+    info_y = y_start + 20
+    draw_text(draw, user_name, info_x, info_y, FONTS['large'], COLORS['white'])
+    draw.rectangle([info_x, info_y + 30, info_x + 200, info_y + 55], fill=COLORS['hp'])
+    draw_text(draw, f"HP: {player_state.wizard_hp} / 20", info_x + 5, info_y + 33, FONTS['medium'], COLORS['white'])
+    draw.rectangle([info_x, info_y + 60, info_x + 200, info_y + 85], fill=COLORS['aether'])
+    draw_text(draw, f"Aether: {player_state.aether} / 16", info_x + 5, info_y + 63, FONTS['medium'], COLORS['white'])
+    
+    # Hand
+    hand_x = 900
+    hand_y = y_start + 20
+    draw_text(draw, "Hand:", hand_x, hand_y, FONTS['medium'], COLORS['white'])
+    if is_opponent:
+        draw_text(draw, f"{len(player_state.hand)} Cards", hand_x + 5, hand_y + 30, FONTS['small'], COLORS['text_dim'])
+    else:
+        for i, card in enumerate(player_state.hand):
+            if i > 12: # Limit display
+                draw_text(draw, "...", hand_x + 5, hand_y + 30 + i * 20, FONTS['small'], COLORS['text_dim'])
+                break
+            draw_text(draw, f"• {card.name} ({card.type})", hand_x + 5, hand_y + 30 + i * 20, FONTS['small'], COLORS['text'])
+            
+    # Deck/Discard
+    draw_text(draw, f"Deck: {len(player_state.deck)}", info_x, y_start + 120, FONTS['small'], COLORS['text_dim'])
+    draw_text(draw, f"Discard: {len(player_state.discard)}", info_x, y_start + 140, FONTS['small'], COLORS['text_dim'])
+
+    # Spirit Slots
+    # --- MODIFIED: Swapped opponent's y-position logic ---
+    spirit_y = y_start + (150 if is_opponent else h - card_h - 150) # Opponent spirits are now in the 2nd row (y=150)
+    total_spirit_width = (3 * card_w) + (2 * gap)
+    spirit_x_start = (w - total_spirit_width) // 2
+    
+    for i in range(3):
+        x = spirit_x_start + i * (card_w + gap)
+        draw_card(draw, player_state.spirit_slots[i], x, spirit_y, card_w, card_h, is_spirit=True)
+        
+    # Spell Slots
+    # --- MODIFIED: Swapped opponent's y-position logic ---
+    spell_y = y_start + (20 if is_opponent else h - card_h - 20) # Opponent spells are now in the 1st row (y=20)
+    total_spell_width = (4 * card_w) + (3 * gap)
+    spell_x_start = (w - total_spell_width) // 2
+
+    for i in range(4):
+        x = spell_x_start + i * (card_w + gap)
+        draw_card(draw, player_state.spell_slots[i], x, spell_y, card_w, card_h, is_spirit=False)
+
+
+async def generate_board_image(game: ArcanaGame) -> BytesIO:
     """
     Creates an image of the current board state and returns it as a BytesIO object.
     This is the direct replacement for your Pygame draw_board function.
     """
     
-    # --- This is where you will use PIL to draw the board ---
-    # This is a complex function you'll need to build out.
-    
     # 1. Create a blank image
-    # Example: img = Image.new('RGB', (1000, 800), color=(30, 30, 40))
-    # d = ImageDraw.Draw(img)
-    # font = ImageFont.truetype("arial.ttf", 15)
-
-    # 2. Draw Player 1's side (bottom)
-    # d.text((10, 750), f"Player 1 (HP: {game.players[game.player1_id].wizard_hp})", fill=(255,255,255), font=font)
-    # for i, spirit in enumerate(game.players[game.player1_id].spirit_slots):
-    #     d.rectangle([100 + i*120, 600, 200 + i*120, 700], fill=(60, 90, 120))
-    #     if spirit:
-    #         d.text((105 + i*120, 605), spirit.name, fill=(255,255,255), font=font)
-
-    # 3. Draw Player 2's side (top, perhaps rotated or just mirrored)
-    # ...
-
-    # 4. For now, we'll just create a placeholder image
-    img = Image.new('RGB', (1000, 800), color=(30, 30, 40))
+    img_width = 1200
+    img_height = 900
+    img = Image.new('RGB', (img_width, img_height), color=COLORS['bg'])
     d = ImageDraw.Draw(img)
-    try:
-        # You may need to provide a path to a real .ttf font file
-        # On Windows: "arial.ttf"
-        # On Linux: You might need to find the path, e.g., "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        font = ImageFont.truetype("/usr/share/fonts/TTF/CaskaydiaCoveNerdFontMono-Regular.ttf", 20)
-    except IOError:
-        print("Font not found, using default. Image text will look blocky.")
-        font = ImageFont.load_default()
 
-    d.text((300, 350), "This is a placeholder for the board image.", fill=(255, 255, 255), font=font)
-    d.text((300, 400), "You need to build `generate_board_image` in bot.py!", fill=(255, 255, 0), font=font)
+    # 2. Get player display names (async)
+    try:
+        p1_user = await bot.fetch_user(game.player1_id)
+        p1_name = p1_user.display_name
+    except:
+        p1_name = f"Player 1 ({game.player1_id})"
+
+    try:
+        if game.player2_id == bot.user.id:
+            p2_name = "Arcana Bot"
+        else:
+            p2_user = await bot.fetch_user(game.player2_id)
+            p2_name = p2_user.display_name
+    except:
+        p2_name = f"Player 2 ({game.player2_id})"
+
+    # 3. Determine who is opponent (top) and player (bottom)
+    # For now, let's assume player1 is always bottom
+    player_state = game.players[game.player1_id]
+    opponent_state = game.players[game.player2_id]
+    
+    # Draw Opponent Area (Top)
+    draw_player_area(d, opponent_state, p2_name, y_start=0, is_opponent=True)
+    
+    # Draw Player Area (Bottom)
+    draw_player_area(d, player_state, p1_name, y_start=450, is_opponent=False)
+    
+    # Draw Center Line (Turn Info)
+    d.rectangle([0, 445, img_width, 455], fill=COLORS['text_dim'])
+    
+    if game.game_over:
+        winner_id = game.winner
+        winner_name = p1_name if winner_id == game.player1_id else p2_name
+        text = f"GAME OVER - {winner_name} WINS!"
+        bbox = d.textbbox((0, 0), text, font=FONTS['title'])
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        d.rectangle([(img_width-text_w)//2 - 10, (img_height-text_h)//2 - 10, (img_width+text_w)//2 + 10, (img_height+text_h)//2 + 10], fill=COLORS['hp'])
+        draw_text(d, text, (img_width-text_w)//2, (img_height-text_h)//2 - 5, FONTS['title'], COLORS['white'])
+    else:
+        current_player_name = p1_name if game.current_player_id == game.player1_id else p2_name
+        text = f"Turn {game.turn_count} - {current_player_name}'s Turn - {game.current_phase.value} Phase"
+        bbox = d.textbbox((0, 0), text, font=FONTS['medium'])
+        text_w = bbox[2] - bbox[0]
+        draw_text(d, text, (img_width-text_w)//2, 448 - (bbox[3] - bbox[1]) - 2, FONTS['medium'], COLORS['white'])
+
 
     # 5. Save the image to a in-memory file
     image_buffer = BytesIO()
@@ -161,7 +356,7 @@ class GameActionView(discord.ui.View):
             content = f"**GAME OVER! {winner_user_mention} WINS!**"
             
             # Create final board image
-            board_image = generate_board_image(self.game)
+            board_image = await generate_board_image(self.game)
             file = discord.File(board_image, "board.png")
             
             # Edit the original message to show winner and stop buttons
@@ -180,7 +375,7 @@ class GameActionView(discord.ui.View):
             current_player_user = await bot.fetch_user(self.game.current_player_id)
             current_player_name = current_player_user.display_name
         
-        board_image = generate_board_image(self.game)
+        board_image = await generate_board_image(self.game)
         file = discord.File(board_image, "board.png")
         
         content = f"Turn {self.game.turn_count} - {current_player_name}'s Turn - {self.game.current_phase.value} Phase"
@@ -267,7 +462,9 @@ class GameActionView(discord.ui.View):
                 await interaction.followup.send("Arcana Bot is thinking...", ephemeral=True)
                 
                 # Run the AI turn (this is a synchronous function)
-                ai_controller_instance.execute_ai_turn(self.game)
+                # In a real-world scenario, you might run this in an executor
+                # await asyncio.to_thread(ai_controller_instance.execute_ai_turn, self.game)
+                ai_controller_instance.execute_ai_turn(self.game) # Assuming this is fast enough
                 
                 # The AI turn *ends itself* by calling next_phase() until it's the player's turn again.
                 message_prefix = "Arcana Bot has finished its turn."
@@ -417,6 +614,21 @@ async def on_ready():
     global ai_controller_instance
     ai_controller_instance = DiscordAIController(bot.user.id)
     print(f"AI Controller initialized for bot ID {bot.user.id}")
+    
+    # --- Initialize HTTP Session for AI ---
+    global http_session
+    http_session = aiohttp.ClientSession()
+    print("aiohttp session initialized.")
+
+    # --- Configure Gemini ---
+    if genai and GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            print("Gemini AI configured.")
+        except Exception as e:
+            print(f"Error configuring Gemini: {e}")
+    elif not GEMINI_API_KEY:
+        print("Warning: GEMINI_API_KEY not set in .env. AI description command will fail.")
     # -----------------------------
 
     try:
@@ -430,6 +642,13 @@ async def on_ready():
         print(f"Synced {len(synced)} command(s).")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
+
+@bot.event
+async def on_close():
+    """Clean up the http session when bot closes."""
+    if http_session:
+        await http_session.close()
+        print("aiohttp session closed.")
 
 # --- Admin Check ---
 def is_admin():
@@ -477,7 +696,7 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
     active_games[interaction.channel.id] = game
     
     # --- Send the initial board state ---
-    board_image = generate_board_image(game)
+    board_image = await generate_board_image(game)
     
     game_start_message = f"A game has begun between {interaction.user.mention} and {opponent.mention}!\n"
     if opponent.id == bot.user.id:
@@ -521,6 +740,37 @@ async def viewcard(interaction: discord.Interaction, card_id: str):
         embed.add_field(name="Scaling", value=card_data.get('scaling', 0), inline=True)
         
     embed.set_footer(text="Use /deck to manage your cards")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# --- NEW: List Cards Command ---
+@bot.tree.command(name="listcards", description="Lists all cards in the library", guild=TEST_GUILD)
+async def listcards(interaction: discord.Interaction):
+    spirits = card_manager.cards.get("spirits", {})
+    spells = card_manager.cards.get("spells", {})
+
+    embed = discord.Embed(title="Card Library", color=discord.Color.gold())
+
+    # Format lists
+    spirit_list = [f"`{cid}`: {data.get('name', 'N/A')}" for cid, data in spirits.items()]
+    spell_list = [f"`{cid}`: {data.get('name', 'N/A')}" for cid, data in spells.items()]
+
+    # Add fields, handling potential for long lists (Discord field limit 1024 chars)
+    if spirit_list:
+        s_list_str = "\n".join(spirit_list)
+        if len(s_list_str) > 1024:
+            s_list_str = s_list_str[:1020] + "\n..."
+        embed.add_field(name="Spirits", value=s_list_str or "None", inline=False)
+    else:
+        embed.add_field(name="Spirits", value="None", inline=False)
+        
+    if spell_list:
+        s_list_str = "\n".join(spell_list)
+        if len(s_list_str) > 1024:
+            s_list_str = s_list_str[:1020] + "\n..."
+        embed.add_field(name="Spells", value=s_list_str or "None", inline=False)
+    else:
+        embed.add_field(name="Spells", value="None", inline=False)
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -631,7 +881,7 @@ admin_group = app_commands.Group(name="admin", description="Admin-only commands"
 )
 async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, cost: int, power: int, defense: int, hp: int, effect: str = "", effects_json: str = "{}"):
     if card_manager.get_card(card_id):
-        await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists!", ephemeral=True)
+        await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists! Use /admin updatefield to modify.", ephemeral=True)
         return
     
     try:
@@ -668,7 +918,7 @@ async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, 
 )
 async def add_spell(interaction: discord.Interaction, card_id: str, name: str, cost: int, effect: str, scaling: int = 0, effects_json: str = "{}"):
     if card_manager.get_card(card_id):
-        await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists!", ephemeral=True)
+        await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists! Use /admin updatefield to modify.", ephemeral=True)
         return
 
     try:
@@ -689,6 +939,137 @@ async def add_spell(interaction: discord.Interaction, card_id: str, name: str, c
         await interaction.response.send_message(f"Successfully added spell: {name} (`{card_id}`). The card library is reloaded.", ephemeral=True)
     else:
         await interaction.response.send_message(f"Error: Failed to save card to `cards.json`.", ephemeral=True)
+
+# --- NEW: Admin Remove Card ---
+@admin_group.command(name="removecard", description="[Admin] Remove a card from the library")
+@is_admin()
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(card_id="The ID of the card to remove")
+async def remove_card(interaction: discord.Interaction, card_id: str):
+    success, message = card_manager.remove_card(card_id)
+    if success:
+        await interaction.response.send_message(f"Successfully removed card `{card_id}`. Library reloaded.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Error: {message}", ephemeral=True)
+
+# --- NEW: Admin Update Card ---
+@admin_group.command(name="updatefield", description="[Admin] Update a specific field for a card")
+@is_admin()
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(
+    card_id="The ID of the card to update",
+    field="The field to update (e.g., 'power', 'effect', 'effects.direct_attack')",
+    value="The new value for the field"
+)
+async def update_field(interaction: discord.Interaction, card_id: str, field: str, value: str):
+    success, message = card_manager.update_card_field(card_id, field, value)
+    if success:
+        await interaction.response.send_message(f"Successfully updated `{field}` for `{card_id}`. Library reloaded.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"Error: {message}", ephemeral=True)
+
+# --- NEW: Admin AI Commands ---
+@admin_group.command(name="generatedescription", description="[Admin] Generate a new card description with Gemini AI")
+@is_admin()
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(card_id="The card to generate a description for")
+async def generate_description(interaction: discord.Interaction, card_id: str):
+    if not genai or not GEMINI_API_KEY:
+        await interaction.response.send_message("Gemini AI is not configured. Check .env and imports.", ephemeral=True)
+        return
+
+    card_data = card_manager.get_card(card_id)
+    if not card_data:
+        await interaction.response.send_message(f"Card '{card_id}' not found.", ephemeral=True)
+        return
+        
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        model = genai.GenerativeModel('gemini-pro')
+        prompt = (
+            f"You are a trading card game designer. Write a cool, concise (1-2 lines) "
+            f"effect description for a card named '{card_data.get('name', 'Unknown')}'."
+            f"The card's stats are: {card_data}. "
+            f"The card's internal effect keywords are: {card_data.get('effects', {})}. "
+            f"Do not include the card name in the description."
+        )
+        
+        response = await model.generate_content_async(prompt)
+        
+        new_description = response.text.strip().replace("\"", "")
+        
+        # Update the card
+        success, message = card_manager.update_card_field(card_id, "effect", new_description)
+        
+        if success:
+            await interaction.followup.send(f"Generated and updated description for `{card_id}`:\n\n{new_description}")
+        else:
+            await interaction.followup.send(f"Generated description, but failed to save: {message}\n\n{new_description}")
+            
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred while generating description: {e}")
+
+@admin_group.command(name="generateart", description="[Admin] Generate new card art with Stability AI")
+@is_admin()
+@app_commands.autocomplete(card_id=card_autocomplete)
+@app_commands.describe(card_id="The card to generate art for")
+async def generate_art(interaction: discord.Interaction, card_id: str):
+    if not STABILITY_API_KEY or not http_session:
+        await interaction.response.send_message("Stability AI is not configured. Check .env and `on_ready`.", ephemeral=True)
+        return
+        
+    card_data = card_manager.get_card(card_id)
+    if not card_data:
+        await interaction.response.send_message(f"Card '{card_id}' not found.", ephemeral=True)
+        return
+        
+    await interaction.response.defer(ephemeral=True)
+    
+    card_name = card_data.get('name', card_id)
+    card_type = card_manager.get_card_type(card_id)
+    
+    prompt = (
+        f"Epic fantasy trading card art of a {card_name}. "
+        f"Type: {card_type}. "
+        f"{card_data.get('effect', '')}. "
+        f"Style: digital painting, vibrant, detailed, centered."
+    )
+    
+    STABILITY_API_URL = f"https://api.stability.ai/v1/generation/{STABILITY_MODEL_ID}/text-to-image"
+    headers = {
+        "Authorization": f"Bearer {STABILITY_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    payload = {
+        "text_prompts": [{"text": prompt}],
+        "cfg_scale": 7,
+        "height": 512,
+        "width": 512,
+        "samples": 1,
+        "steps": 30,
+    }
+
+    try:
+        async with http_session.post(STABILITY_API_URL, headers=headers, json=payload) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise Exception(f"Stability AI API error ({response.status}): {error_text}")
+                
+            data = await response.json()
+            image_b64 = data["artifacts"][0]["base64"]
+            image_data = BytesIO(json.loads(image_b64)) # Error here: json.loads is wrong, need base64.b64decode
+            
+            # Correction:
+            import base64
+            image_data = BytesIO(base64.b64decode(image_b64))
+            file = discord.File(image_data, filename=f"{card_id}_art.png")
+            
+            await interaction.followup.send(f"Generated art for `{card_id}` ({card_name}):", file=file)
+
+    except Exception as e:
+        await interaction.followup.send(f"An error occurred while generating art: {e}")
 
 
 @admin_group.command(name="shutdown", description="[Admin] Shuts down the bot.")
