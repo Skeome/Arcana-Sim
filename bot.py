@@ -7,6 +7,7 @@ from io import BytesIO
 from dotenv import load_dotenv
 import asyncio
 import aiohttp # For async web requests (Stability AI)
+import base64 # For handling Stability AI response
 
 # --- Load .env variables ---
 load_dotenv()
@@ -128,7 +129,13 @@ def get_font(size):
         except IOError:
             continue
     print(f"Could not find preferred fonts. Using default font for size {size}.")
-    return ImageFont.load_default()
+    # Fallback to default PIL font if no paths work
+    try:
+        return ImageFont.load_default()
+    except IOError:
+        # A very basic fallback font if load_default fails in some weird env
+        return ImageFont.load_default()
+
 
 FONTS = {
     'small': get_font(14),
@@ -139,7 +146,15 @@ FONTS = {
 
 def draw_text(draw, text, x, y, font, color, max_width=None):
     """Draws text, wrapping if max_width is provided. Returns the Y position after drawing."""
-    line_height = (draw.textbbox((0,0), "Tg", font=font)[3] - draw.textbbox((0,0), "Tg", font=font)[1]) + 2
+    
+    # Handle potential fallback font
+    if not hasattr(font, 'getbbox'):
+        # This is the old PIL 'load_default()' font
+        line_height = font.getsize("Tg")[1] + 2
+    else:
+        # This is a modern truetype font
+        bbox = font.getbbox("Tg")
+        line_height = (bbox[3] - bbox[1]) + 2
     
     if max_width:
         words = text.split(' ')
@@ -151,9 +166,12 @@ def draw_text(draw, text, x, y, font, color, max_width=None):
             else:
                 test_line = f"{current_line} {word}"
             
-            # Check width using textbbox
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            line_width = bbox[2] - bbox[0]
+            # Check width
+            if hasattr(font, 'getbbox'):
+                bbox = font.getbbox(test_line)
+                line_width = bbox[2] - bbox[0]
+            else:
+                line_width = font.getsize(test_line)[0]
 
             if line_width <= max_width:
                 current_line = test_line
@@ -201,8 +219,11 @@ def draw_card(draw, card, x, y, w, h, is_spirit):
 
 def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
     """Draws one player's entire side of the board."""
-    w, h = 1200, 450 # Main image dimensions
-    card_w, card_h = 140, 100 # Card dimensions
+    # --- MODIFIED: Canvas size ---
+    w, h = 1920, 540 # Main image dimensions
+    
+    # --- MODIFIED: Card dimensions ---
+    card_w, card_h = 150, 210 # Portrait and larger
     gap = 20
 
     # Draw player bg
@@ -219,8 +240,13 @@ def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
     draw_text(draw, f"Aether: {player_state.aether} / 16", info_x + 5, info_y + 63, FONTS['medium'], COLORS['white'])
     
     # Hand
-    hand_x = 900
-    hand_y = y_start + 20
+    # --- MODIFIED: Hand X positions ---
+    player_hand_x = 1500  # Player's hand on the right
+    opponent_hand_x = 1500 # Opponent's hand closer to the center
+    
+    hand_x = opponent_hand_x if is_opponent else player_hand_x
+    # --- MODIFIED: Y value for hand text (to fix clipping) ---
+    hand_y = y_start + 30 
     draw_text(draw, "Hand:", hand_x, hand_y, FONTS['medium'], COLORS['white'])
     if is_opponent:
         draw_text(draw, f"{len(player_state.hand)} Cards", hand_x + 5, hand_y + 30, FONTS['small'], COLORS['text_dim'])
@@ -235,9 +261,12 @@ def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
     draw_text(draw, f"Deck: {len(player_state.deck)}", info_x, y_start + 120, FONTS['small'], COLORS['text_dim'])
     draw_text(draw, f"Discard: {len(player_state.discard)}", info_x, y_start + 140, FONTS['small'], COLORS['text_dim'])
 
+    # --- MODIFIED: Y coordinates and X start positions for new card size ---
+    
     # Spirit Slots
-    # --- MODIFIED: Swapped opponent's y-position logic ---
-    spirit_y = y_start + (150 if is_opponent else h - card_h - 150) # Opponent spirits are now in the 2nd row (y=150)
+    # Opponent: spirit_y = 0 + (540 - 210 - 20) = 310
+    # Player:   spirit_y = 540 + 20 = 560
+    spirit_y = y_start + (h - card_h - 50 if is_opponent else 50)
     total_spirit_width = (3 * card_w) + (2 * gap)
     spirit_x_start = (w - total_spirit_width) // 2
     
@@ -246,8 +275,9 @@ def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
         draw_card(draw, player_state.spirit_slots[i], x, spirit_y, card_w, card_h, is_spirit=True)
         
     # Spell Slots
-    # --- MODIFIED: Swapped opponent's y-position logic ---
-    spell_y = y_start + (20 if is_opponent else h - card_h - 20) # Opponent spells are now in the 1st row (y=20)
+    # Opponent: spell_y = 0 + 20 = 20
+    # Player:   spell_y = 540 + (540 - 210 - 20) = 850
+    spell_y = y_start + (20 if is_opponent else h - card_h - 20)
     total_spell_width = (4 * card_w) + (3 * gap)
     spell_x_start = (w - total_spell_width) // 2
 
@@ -263,8 +293,9 @@ async def generate_board_image(game: ArcanaGame) -> BytesIO:
     """
     
     # 1. Create a blank image
-    img_width = 1200
-    img_height = 900
+    # --- MODIFIED: Canvas size ---
+    img_width = 1920
+    img_height = 1080
     img = Image.new('RGB', (img_width, img_height), color=COLORS['bg'])
     d = ImageDraw.Draw(img)
 
@@ -293,26 +324,47 @@ async def generate_board_image(game: ArcanaGame) -> BytesIO:
     draw_player_area(d, opponent_state, p2_name, y_start=0, is_opponent=True)
     
     # Draw Player Area (Bottom)
-    draw_player_area(d, player_state, p1_name, y_start=450, is_opponent=False)
+    # --- MODIFIED: y_start for player area ---
+    draw_player_area(d, player_state, p1_name, y_start=540, is_opponent=False)
     
     # Draw Center Line (Turn Info)
-    d.rectangle([0, 445, img_width, 455], fill=COLORS['text_dim'])
+    # --- MODIFIED: Center line position ---
+    d.rectangle([0, 535, img_width, 545], fill=COLORS['text_dim'])
     
     if game.game_over:
         winner_id = game.winner
         winner_name = p1_name if winner_id == game.player1_id else p2_name
         text = f"GAME OVER - {winner_name} WINS!"
-        bbox = d.textbbox((0, 0), text, font=FONTS['title'])
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
+        
+        # Calculate text size
+        if hasattr(FONTS['title'], 'getbbox'):
+            bbox = FONTS['title'].getbbox(text)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        else:
+            size = FONTS['title'].getsize(text)
+            text_w = size[0]
+            text_h = size[1]
+            
         d.rectangle([(img_width-text_w)//2 - 10, (img_height-text_h)//2 - 10, (img_width+text_w)//2 + 10, (img_height+text_h)//2 + 10], fill=COLORS['hp'])
         draw_text(d, text, (img_width-text_w)//2, (img_height-text_h)//2 - 5, FONTS['title'], COLORS['white'])
     else:
         current_player_name = p1_name if game.current_player_id == game.player1_id else p2_name
         text = f"Turn {game.turn_count} - {current_player_name}'s Turn - {game.current_phase.value} Phase"
-        bbox = d.textbbox((0, 0), text, font=FONTS['medium'])
-        text_w = bbox[2] - bbox[0]
-        draw_text(d, text, (img_width-text_w)//2, 448 - (bbox[3] - bbox[1]) - 2, FONTS['medium'], COLORS['white'])
+        
+        # Calculate text size
+        if hasattr(FONTS['medium'], 'getbbox'):
+            bbox = FONTS['medium'].getbbox(text)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        else:
+            size = FONTS['medium'].getsize(text)
+            text_w = size[0]
+            text_h = size[1]
+        
+        # --- MODIFIED: Y coordinate for turn text ---
+        # Draw 5px *above* the center line (535)
+        draw_text(d, text, (img_width-text_w)//2, 535 - text_h - 5, FONTS['medium'], COLORS['white'])
 
 
     # 5. Save the image to a in-memory file
@@ -1045,8 +1097,8 @@ async def generate_art(interaction: discord.Interaction, card_id: str):
     payload = {
         "text_prompts": [{"text": prompt}],
         "cfg_scale": 7,
-        "height": 1024,
-        "width": 1024,
+        "height": 1024, # Use allowed SDXL dimension
+        "width": 1024,  # Use allowed SDXL dimension
         "samples": 1,
         "steps": 30,
     }
@@ -1059,10 +1111,8 @@ async def generate_art(interaction: discord.Interaction, card_id: str):
                 
             data = await response.json()
             image_b64 = data["artifacts"][0]["base64"]
-            image_data = BytesIO(json.loads(image_b64)) # Error here: json.loads is wrong, need base64.b64decode
             
             # Correction:
-            import base64
             image_data = BytesIO(base64.b64decode(image_b64))
             file = discord.File(image_data, filename=f"{card_id}_art.png")
             
