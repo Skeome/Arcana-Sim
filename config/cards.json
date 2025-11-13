@@ -10,7 +10,7 @@
     },
     "frost_wyrm": {
       "name": "Frost Wyrm",
-      "activation_cost": 2, 
+      "activation_cost": 2,
       "power": 4,
       "defense": 1,
       "hp": 12,
@@ -19,27 +19,35 @@
     "inferno_dragon": {
       "name": "Inferno Dragon",
       "activation_cost": 3,
-      "power": 6, 
+      "power": 6,
       "defense": 0,
-      "hp": 16,
+      "hp": 10,
       "effect": "Can attack wizard directly"
+    },
+    "wind_sentinel": {
+      "name": "Wind Sentinel",
+      "activation_cost": 6,
+      "power": 9,
+      "defense": 3,
+      "hp": 18,
+      "effect": ""
     }
   },
   "spells": {
     "firestorm": {
-      "name": "Firestorm", 
+      "name": "Firestorm",
       "activation_cost": 3,
       "effect": "Deal 3 damage to all enemy spirits",
       "scaling": 3
     },
     "earthquake": {
-      "name": "Earthquake", 
+      "name": "Earthquake",
       "activation_cost": 6,
       "effect": "Deal 5 damage to all enemy spirits",
       "scaling": 6
     },
     "wind_blade": {
-      "name": "Wind Blade", 
+      "name": "Wind Blade",
       "activation_cost": 5,
       "effect": "Deal 3 damage to all enemy spirits",
       "scaling": 5
@@ -47,7 +55,7 @@
     "healing_wave": {
       "name": "Healing Wave",
       "activation_cost": 2,
-      "effect": "Heal 4 HP to spirit and 2 HP to wizard", 
+      "effect": "Heal 4 HP to spirit and 2 HP to wizard",
       "scaling": 4
     }
   }
