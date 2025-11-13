@@ -1,8 +1,8 @@
 import json
-import random # Import at top
-import os # <-- Import OS for file checking
+import random
+import os
 from enum import Enum
-# CardManager is no longer imported, it's passed in
+
 
 class Phase(Enum):
     ATTAINMENT = "attunement"
@@ -11,7 +11,8 @@ class Phase(Enum):
     RESPITE = "respite"
 
 class Card:
-    def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element=""):
+    # --- ADDED 'effects' PARAMETER ---
+    def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element="", effects=None):
         self.name = name
         self.type = card_type  # "spirit" or "spell"
         self.activation_cost = activation_cost
@@ -19,9 +20,11 @@ class Card:
         self.defense = defense
         self.max_hp = hp
         self.current_hp = hp
-        self.effect = effect
+        self.effect = effect # Keep for display
         self.scaling = scaling
         self.element = element
+        self.effects = effects if effects is not None else {}
+
 
 class PlayerState:
     def __init__(self, name):
@@ -35,10 +38,10 @@ class PlayerState:
         self.spirit_slots = [None, None, None]  # 3 slots
         self.spell_slots = [[], [], [], []]     # 4 slots, each can hold a stack
         self.wizard_ability_used = False
-        self.placed_card_this_turn = False # --- ADDED: One card per turn rule ---
+        self.placed_card_this_turn = False
 
 class ArcanaGame:
-    def __init__(self, card_manager): # <-- Accept the card_manager
+    def __init__(self, card_manager):
         self.players = {
             "player": PlayerState("player"),
             "npc": PlayerState("npc")
@@ -48,7 +51,7 @@ class ArcanaGame:
         self.turn_count = 1
         self.game_over = False
         self.winner = None
-        self.card_manager = card_manager # <-- Store the card manager
+        self.card_manager = card_manager
         
         # Load decks from JSON files
         self.initialize_decks()
@@ -153,7 +156,7 @@ class ArcanaGame:
         # Gain 2 Aether
         player.aether = min(player.aether + 2, player.max_aether)
         
-        # --- ADDED: Reset turn flags ---
+        # --- Reset turn flags ---
         player.wizard_ability_used = False
         player.placed_card_this_turn = False
     
@@ -166,7 +169,7 @@ class ArcanaGame:
         
         player = self.players[player_name]
 
-        # --- ADDED: One card per turn rule ---
+        # --- One card per turn rule ---
         if player.placed_card_this_turn:
             return False, "Already placed a card this turn"
         
@@ -199,7 +202,7 @@ class ArcanaGame:
         
         player = self.players[player_name]
         
-        # --- ADDED: One card per turn rule ---
+        # --- One card per turn rule ---
         if player.placed_card_this_turn:
             return False, "Already placed a card this turn"
 
@@ -237,7 +240,7 @@ class ArcanaGame:
         
         player = self.players[player_name]
         
-        # --- ADDED: One card per turn rule ---
+        # --- One card per turn rule ---
         if player.placed_card_this_turn:
             return False, "Already placed a card this turn"
 
@@ -279,7 +282,7 @@ class ArcanaGame:
         
         player = self.players[player_name]
 
-        # --- ADDED: One card per turn rule ---
+        # --- One card per turn rule ---
         if player.placed_card_this_turn:
             return False, "Already placed a card this turn"
         if player.wizard_ability_used:
@@ -289,7 +292,7 @@ class ArcanaGame:
         # For now, just mark as used and give 1 Aether
         player.aether = min(player.aether + 1, player.max_aether)
         player.wizard_ability_used = True
-        player.placed_card_this_turn = True # --- ADDED (counts as the action) ---
+        player.placed_card_this_turn = True
         return True, "Wizard ability used! (Gained 1 Aether)"
 
     def activate_spell(self, player_name, slot_index, copies_used):
@@ -323,44 +326,16 @@ class ArcanaGame:
         effect_applied = False
         message = f"Activated {spell.name} x{copies_used}"
 
-        # --- Example of expanded effect logic ---
-        if spell.name == "Firestorm":
-            damage = spell.scaling * copies_used
-            message_parts = [message] # Start with the activation message
-            for i, spirit in enumerate(opponent.spirit_slots): # Use enumerate to get index
-                if spirit:
-                    # Calculate damage after defense
-                    actual_damage = max(0, damage - spirit.defense)
-                    spirit.current_hp -= actual_damage
-                    message_parts.append(f"{spirit.name} takes {actual_damage}")
-                    # Check if spirit died
-                    if spirit.current_hp <= 0:
-                        opponent.discard.append(spirit)
-                        opponent.spirit_slots[i] = None # <-- Correct way to remove
-                        message_parts.append(f"{spirit.name} destroyed")
-            
-            effect_applied = True
-            if len(message_parts) == 1:
-                message = f"Firestorm cast, but no enemy spirits."
-            else:
-                message = ", ".join(message_parts)
-        
-        elif spell.name == "Healing Wave":
-            healing = spell.scaling * copies_used
-            # Updated effect: "Heal 4 HP to spirit and 2 HP to wizard"
-            # This is ambiguous - does it do both? Or one?
-            # Let's assume for now it just heals the wizard (simpler)
-            # We'll need a targeting system for "heal spirit"
-            player.wizard_hp = min(20, player.wizard_hp + (2 * copies_used)) # 2 HP per copy
-            effect_applied = True
-            message = f"Healed {2 * copies_used} HP to your wizard"
+        # --- Resolve spell effects using keywords ---
+        spell_effects = spell.effects
+        message_parts = [message]
 
-        elif spell.name == "Earthquake" or spell.name == "Wind Blade":
-            # Assuming these work just like Firestorm
+        if spell_effects.get("aoe_damage") and spell_effects.get("target") == "enemy_spirits":
             damage = spell.scaling * copies_used
-            message_parts = [message]
+            targets_hit = 0
             for i, spirit in enumerate(opponent.spirit_slots):
                 if spirit:
+                    targets_hit += 1
                     actual_damage = max(0, damage - spirit.defense)
                     spirit.current_hp -= actual_damage
                     message_parts.append(f"{spirit.name} takes {actual_damage}")
@@ -370,10 +345,23 @@ class ArcanaGame:
                         message_parts.append(f"{spirit.name} destroyed")
             
             effect_applied = True
-            if len(message_parts) == 1:
+            if targets_hit == 0:
                 message = f"{spell.name} cast, but no enemy spirits."
             else:
                 message = ", ".join(message_parts)
+        
+        elif spell_effects.get("heal_wizard"):
+            wizard_heal = spell_effects.get("heal_wizard", 0) * copies_used
+            player.wizard_hp = min(20, player.wizard_hp + wizard_heal)
+            message_parts = [f"Healed {wizard_heal} HP to your wizard"]
+            
+            # Check for spirit heal on the same card
+            if spell_effects.get("heal_spirit"):
+                # TODO: Add targeting for healing spirits.
+                message_parts.append(f"({spell_effects.get('heal_spirit')} spirit heal not implemented)")
+
+            effect_applied = True
+            message = ", ".join(message_parts)
         
         # Remove used copies from the stack
         if effect_applied:
@@ -411,7 +399,10 @@ class ArcanaGame:
         if target_type == "wizard":
             # Check Guard Rule
             has_guard = any(opponent.spirit_slots)
-            if has_guard and "directly" not in spirit.effect.lower():
+            # --- USE KEYWORD ---
+            can_attack_directly = spirit.effects.get("direct_attack", False)
+
+            if has_guard and not can_attack_directly:
                 # Refund cost if attack fails
                 player.aether += spirit.activation_cost
                 return False, "Cannot attack wizard (Guard Rule)"
@@ -445,12 +436,15 @@ class ArcanaGame:
             
             message_parts = [f"{spirit.name} attacked {target_spirit.name} for {damage} damage"]
             
-            # Handle spirit effects
-            if "reduce" in spirit.effect.lower() and "defense" in spirit.effect.lower():
-                # Check for "Defense cannot be reduced"
-                if "cannot be reduced" not in target_spirit.effect.lower():
-                    target_spirit.defense = max(0, target_spirit.defense - 1)
-                    message_parts.append("and reduced its defense by 1")
+            # --- Handle spirit effects using keywords ---
+            reduce_amount = spirit.effects.get("reduce_defense")
+            if reduce_amount:
+                # Check if target is immune
+                can_be_reduced = not target_spirit.effects.get("prevent_defense_reduction", False)
+                
+                if can_be_reduced:
+                    target_spirit.defense = max(0, target_spirit.defense - reduce_amount)
+                    message_parts.append(f"and reduced its defense by {reduce_amount}")
                 else:
                     message_parts.append("but its defense cannot be reduced")
             
@@ -465,7 +459,6 @@ class ArcanaGame:
         return True, message
     
     def execute_npc_turn(self):
-        # This is now deprecated, AIController.execute_ai_turn is used instead
         from ai_controller import AIController
         ai = AIController()
         ai.execute_ai_turn(self)

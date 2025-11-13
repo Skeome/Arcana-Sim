@@ -14,7 +14,7 @@ except ImportError:
         print("CRITICAL: Could not import Card class from game_engine or discord_engine.")
         # Define a fallback class so the file can at least be imported
         class Card:
-             def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element=""):
+             def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element="", effects=None):
                 self.name = name
                 self.type = card_type
                 self.activation_cost = activation_cost
@@ -25,6 +25,7 @@ except ImportError:
                 self.effect = effect
                 self.scaling = scaling
                 self.element = element
+                self.effects = effects if effects is not None else {}
                 print("Using fallback Card class")
 
 
@@ -43,7 +44,8 @@ class CardManager:
                     "power": 2,
                     "defense": 3,
                     "hp": 8,
-                    "effect": "Defense cannot be reduced"
+                    "effect": "Defense cannot be reduced",
+                    "effects": {"prevent_defense_reduction": True}
                 },
                 "frost_wyrm": {
                     "name": "Frost Wyrm", 
@@ -51,7 +53,8 @@ class CardManager:
                     "power": 4,
                     "defense": 1,
                     "hp": 12,
-                    "effect": "Attack reduces target defense by 1"
+                    "effect": "Attack reduces target defense by 1",
+                    "effects": {"reduce_defense": 1}
                 },
                 "inferno_dragon": {
                     "name": "Inferno Dragon",
@@ -59,7 +62,8 @@ class CardManager:
                     "power": 6,
                     "defense": 0, 
                     "hp": 16,
-                    "effect": "Can attack wizard directly"
+                    "effect": "Can attack wizard directly",
+                    "effects": {"direct_attack": True}
                 }
             },
             "spells": {
@@ -67,13 +71,15 @@ class CardManager:
                     "name": "Firestorm", 
                     "activation_cost": 3,
                     "effect": "Deal 3 damage to all enemy spirits",
-                    "scaling": 3
+                    "scaling": 3,
+                    "effects": {"aoe_damage": True, "target": "enemy_spirits"}
                 },
                 "healing_wave": {
                     "name": "Healing Wave",
                     "activation_cost": 2,
                     "effect": "Heal 4 HP to spirit or 1 HP to wizard",
-                    "scaling": 4
+                    "scaling": 0,
+                    "effects": {"heal_wizard": 1, "heal_spirit": 4}
                 }
             }
         }
@@ -133,7 +139,8 @@ class CardManager:
                 power=card_data.get("power", 0),
                 defense=card_data.get("defense", 0),
                 hp=card_data.get("hp", 0),
-                effect=card_data.get("effect", "")
+                effect=card_data.get("effect", ""),
+                effects=card_data.get("effects", {})
             )
         else:  # spells
             return Card(
@@ -142,7 +149,8 @@ class CardManager:
                 activation_cost=card_data.get("activation_cost", 0),
                 effect=card_data.get("effect", ""),
                 scaling=card_data.get("scaling", 0),
-                element=card_data.get("element", "")
+                element=card_data.get("element", ""),
+                effects=card_data.get("effects", {})
             )
     
     def save_cards(self, file_path="config/cards.json"):

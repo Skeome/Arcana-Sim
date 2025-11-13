@@ -14,7 +14,8 @@ class Phase(Enum):
     RESPITE = "respite"
 
 class Card:
-    def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element=""):
+    # --- ADDED 'effects' PARAMETER ---
+    def __init__(self, name, card_type, activation_cost, power=0, defense=0, hp=0, effect="", scaling=0, element="", effects=None):
         self.name = name
         self.type = card_type  # "spirit" or "spell"
         self.activation_cost = activation_cost
@@ -22,9 +23,10 @@ class Card:
         self.defense = defense
         self.max_hp = hp
         self.current_hp = hp
-        self.effect = effect
+        self.effect = effect # Keep for display
         self.scaling = scaling
         self.element = element
+        self.effects = effects if effects is not None else {}
 
 class PlayerState:
     def __init__(self, name):
@@ -81,7 +83,9 @@ class ArcanaGame:
             except json.JSONDecodeError:
                  print(f"Error reading custom deck for {user_id}. Loading default: {default_deck_path}")
         else:
-            print(f"No custom deck for {user_id}. Loading default: {default_deck_path}")
+            # Don't print for bot user
+            if not str(user_id).isnumeric(): # Simple check if it's not a bot's name
+                 print(f"No custom deck for {user_id}. Loading default: {default_deck_path}")
 
 
         deck = []
@@ -347,10 +351,12 @@ class ArcanaGame:
         effect_applied = False
         message = f"Activated {spell.name} x{copies_used}"
 
-        # --- Resolve spell effects ---
-        if spell.name in ["Firestorm", "Earthquake", "Wind Blade"]:
+        # --- Resolve spell effects using keywords ---
+        spell_effects = spell.effects
+        message_parts = [message]
+
+        if spell_effects.get("aoe_damage") and spell_effects.get("target") == "enemy_spirits":
             damage = spell.scaling * copies_used
-            message_parts = [message]
             targets_hit = 0
             for i, spirit in enumerate(opponent.spirit_slots):
                 if spirit:
@@ -369,14 +375,18 @@ class ArcanaGame:
             else:
                 message = ", ".join(message_parts)
         
-        elif spell.name == "Healing Wave":
-            # Effect: "Heal 4 HP to spirit and 2 HP to wizard"
-            # TODO: Add targeting for healing spirits.
-            # For now, we'll just apply the wizard heal.
-            wizard_heal = 2 * copies_used
+        elif spell_effects.get("heal_wizard"):
+            wizard_heal = spell_effects.get("heal_wizard", 0) * copies_used
             player.wizard_hp = min(20, player.wizard_hp + wizard_heal)
+            message_parts = [f"Healed {wizard_heal} HP to your wizard"]
+            
+            # Check for spirit heal on the same card
+            if spell_effects.get("heal_spirit"):
+                # TODO: Add targeting for healing spirits.
+                message_parts.append(f"({spell_effects.get('heal_spirit')} spirit heal not implemented)")
+
             effect_applied = True
-            message = f"Healed {wizard_heal} HP to your wizard"
+            message = ", ".join(message_parts)
         
         # --- Finalize effect ---
         if effect_applied:
@@ -387,7 +397,7 @@ class ArcanaGame:
         else:
             # Refund Aether if no effect was applied
             player.aether += total_cost
-            return False, f"Could not activate {spell.name} (no valid targets?)"
+            return False, f"Could not activate {spell.name} (no valid targets or effect?)"
         
         return effect_applied, message
     
@@ -413,7 +423,10 @@ class ArcanaGame:
         # --- Target: Wizard ---
         if target_type == "wizard":
             has_guard = any(opponent.spirit_slots)
-            if has_guard and "directly" not in spirit.effect.lower():
+            # --- USE KEYWORD ---
+            can_attack_directly = spirit.effects.get("direct_attack", False)
+
+            if has_guard and not can_attack_directly:
                 player.aether += spirit.activation_cost # Refund cost
                 return False, "Cannot attack wizard (Guard Rule)"
             
@@ -442,11 +455,15 @@ class ArcanaGame:
             
             message_parts = [f"{spirit.name} attacked {target_spirit.name} for {damage} damage"]
             
-            # Handle spirit effects
-            if "reduce" in spirit.effect.lower() and "defense" in spirit.effect.lower():
-                if "cannot be reduced" not in target_spirit.effect.lower():
-                    target_spirit.defense = max(0, target_spirit.defense - 1)
-                    message_parts.append("and reduced its defense by 1")
+            # --- Handle spirit effects using keywords ---
+            reduce_amount = spirit.effects.get("reduce_defense")
+            if reduce_amount:
+                # Check if target is immune
+                can_be_reduced = not target_spirit.effects.get("prevent_defense_reduction", False)
+                
+                if can_be_reduced:
+                    target_spirit.defense = max(0, target_spirit.defense - reduce_amount)
+                    message_parts.append(f"and reduced its defense by {reduce_amount}")
                 else:
                     message_parts.append("but its defense cannot be reduced")
             

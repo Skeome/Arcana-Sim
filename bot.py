@@ -4,8 +4,8 @@ from discord import app_commands
 import os
 import json # Import json for deck management
 from io import BytesIO
-from dotenv import load_dotenv # <-- Import dotenv
-import asyncio # Added for autocomplete
+from dotenv import load_dotenv
+import asyncio
 
 # --- Load .env variables ---
 load_dotenv()
@@ -25,8 +25,9 @@ if not ADMIN_USER_IDS:
 # ---------------------------
 
 # Import your new DISCORD game logic and card manager
-from discord_engine import ArcanaGame, Phase # <-- Using the new engine
+from discord_engine import ArcanaGame, Phase
 from card_manager import CardManager
+from discord_ai_controller import DiscordAIController
 
 # --- PIL (Python Imaging Library) is needed to create images ---
 # You'll need to install it: pip install Pillow
@@ -37,7 +38,7 @@ from PIL import Image, ImageDraw, ImageFont
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-intents.members = True
+intents.members = True # Make sure members intent is on
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -45,6 +46,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # active_games = { channel_id: ArcanaGame_instance }
 active_games = {}
 card_manager = CardManager() # Load the card library once
+ai_controller_instance = None # Will be initialized on_ready
 
 # --- Deck Management Helpers ---
 DECK_DIR = "config/decks"
@@ -110,9 +112,9 @@ def generate_board_image(game: ArcanaGame) -> BytesIO:
         # You may need to provide a path to a real .ttf font file
         # On Windows: "arial.ttf"
         # On Linux: You might need to find the path, e.g., "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-        font = ImageFont.truetype("arial.ttf", 20)
+        font = ImageFont.truetype("/usr/share/fonts/TTF/CaskaydiaCoveNerdFontMono-Regular.ttf", 20)
     except IOError:
-        print("Arial font not found, using default. Image text will look blocky.")
+        print("Font not found, using default. Image text will look blocky.")
         font = ImageFont.load_default()
 
     d.text((300, 350), "This is a placeholder for the board image.", fill=(255, 255, 255), font=font)
@@ -125,7 +127,7 @@ def generate_board_image(game: ArcanaGame) -> BytesIO:
     return image_buffer
 
 
-# --- Game Action Views (The new "Controller") ---
+# --- Game Action Views ---
 
 class GameActionView(discord.ui.View):
     """
@@ -149,8 +151,14 @@ class GameActionView(discord.ui.View):
         
         # Check for game over
         if self.game.game_over:
-            winner_user = await bot.fetch_user(self.game.winner)
-            content = f"**GAME OVER! {winner_user.mention} WINS!**"
+            # Check if winner is the bot
+            if self.game.winner == bot.user.id:
+                winner_user_mention = bot.user.mention
+            else:
+                winner_user = await bot.fetch_user(self.game.winner)
+                winner_user_mention = winner_user.mention
+                
+            content = f"**GAME OVER! {winner_user_mention} WINS!**"
             
             # Create final board image
             board_image = generate_board_image(self.game)
@@ -165,12 +173,17 @@ class GameActionView(discord.ui.View):
             return
 
         # If game is not over, update the board normally
-        current_player_user = await bot.fetch_user(self.game.current_player_id)
+        # Check if current player is the bot
+        if self.game.current_player_id == bot.user.id:
+            current_player_name = bot.user.display_name
+        else:
+            current_player_user = await bot.fetch_user(self.game.current_player_id)
+            current_player_name = current_player_user.display_name
         
         board_image = generate_board_image(self.game)
         file = discord.File(board_image, "board.png")
         
-        content = f"Turn {self.game.turn_count} - {current_player_user.display_name}'s Turn - {self.game.current_phase.value} Phase"
+        content = f"Turn {self.game.turn_count} - {current_player_name}'s Turn - {self.game.current_phase.value} Phase"
         
         if message_prefix:
             content = f"{message_prefix}\n{content}"
@@ -232,7 +245,7 @@ class GameActionView(discord.ui.View):
             await interaction.response.send_message("You can only attack in the Invocation phase.", ephemeral=True)
             return
         
-        # This will be similar to SelectCardToPlayView, but for your spirits on board
+        # TODO: This needs to be implemented similar to Summon/Prepare
         await interaction.response.send_message("Attack logic not fully implemented yet.", ephemeral=True) # TODO: Add view
 
 
@@ -240,22 +253,42 @@ class GameActionView(discord.ui.View):
     async def end_phase(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not await self._check_turn(interaction): return
 
+        # Defer immediately, as AI turn might take a moment
+        await interaction.response.defer()
+
         current_player_name = interaction.user.display_name
         self.game.next_phase()
         
         message_prefix = f"{current_player_name} ended their phase."
         
-        # Send a ping to the next player
-        if self.game.current_player_id != interaction.user.id:
+        if self.game.current_player_id == bot.user.id and not self.game.game_over:
+            if ai_controller_instance:
+                # Send a "thinking" message. Use followup since we deferred.
+                await interaction.followup.send("Arcana Bot is thinking...", ephemeral=True)
+                
+                # Run the AI turn (this is a synchronous function)
+                ai_controller_instance.execute_ai_turn(self.game)
+                
+                # The AI turn *ends itself* by calling next_phase() until it's the player's turn again.
+                message_prefix = "Arcana Bot has finished its turn."
+            else:
+                # Fallback if AI fails to load
+                self.game.next_phase() # Skip bot turn
+                message_prefix = "AI failed to load, skipping turn."
+                print("Error: ai_controller_instance is None!")
+
+        # Send a ping to the next player (if it's a human)
+        # Check that the new player isn't the user who just clicked, AND isn't the bot
+        if (self.game.current_player_id != interaction.user.id and 
+            self.game.current_player_id != bot.user.id and
+            not self.game.game_over):
+            
             opponent_user = await bot.fetch_user(self.game.current_player_id)
             await interaction.channel.send(f"Your turn, {opponent_user.mention}!")
             message_prefix = f"{current_player_name}'s turn has ended."
 
         # Update the public board message
         await self._update_board(interaction, message_prefix)
-        
-        # Acknowledge the button press
-        await interaction.response.defer()
 
 
 class SelectCardToPlayView(discord.ui.View):
@@ -365,8 +398,10 @@ class SlotButton(discord.ui.Button):
         
         if success:
             # Action was successful, update the main board
-            await self.main_view._update_board(interaction, f"{interaction.user.display_name} {message}.")
+            # We deferred in the main_view.end_phase, but this is a separate interaction
+            # We just need to edit the ephemeral message and let _update_board do its thing
             await interaction.response.edit_message(content=message, view=None) # Edit the ephemeral message
+            await self.main_view._update_board(interaction, f"{interaction.user.display_name} {message}.")
         else:
             # Action failed, just tell the user why
             await interaction.response.edit_message(content=message, view=None)
@@ -377,6 +412,13 @@ class SlotButton(discord.ui.Button):
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}!')
+    
+    # --- Initialize AI Controller ---
+    global ai_controller_instance
+    ai_controller_instance = DiscordAIController(bot.user.id)
+    print(f"AI Controller initialized for bot ID {bot.user.id}")
+    # -----------------------------
+
     try:
         if TEST_GUILD:
             print(f"Syncing commands to Test Guild (ID: {TEST_GUILD.id})...")
@@ -410,12 +452,13 @@ async def card_autocomplete(
 
 # --- Game Commands ---
 
-@bot.tree.command(name="challenge", description="Challenge another player to a game of Arcana", guild=TEST_GUILD)
-@app_commands.describe(opponent="The player you want to challenge")
+@bot.tree.command(name="challenge", description="Challenge another player (or the bot) to a game", guild=TEST_GUILD)
+@app_commands.describe(opponent="The player you want to challenge (select me to play solo!)")
 async def challenge(interaction: discord.Interaction, opponent: discord.User):
-    if opponent.bot:
-        await interaction.response.send_message("You can't challenge a bot!", ephemeral=True)
-        return
+    # --- MODIFIED: Allow challenging self or bot ---
+    # if opponent.bot and opponent.id != bot.user.id:
+    #     await interaction.response.send_message("You can't challenge other bots!", ephemeral=True)
+    #     return
     if opponent.id == interaction.user.id:
         await interaction.response.send_message("You can't challenge yourself!", ephemeral=True)
         return
@@ -436,15 +479,19 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
     # --- Send the initial board state ---
     board_image = generate_board_image(game)
     
+    game_start_message = f"A game has begun between {interaction.user.mention} and {opponent.mention}!\n"
+    if opponent.id == bot.user.id:
+        game_start_message = f"{interaction.user.mention} has challenged the bot to a solo game!\n"
+
     # Send the first message (which is public)
     await interaction.followup.send(
-        f"A game has begun between {interaction.user.mention} and {opponent.mention}!\n"
+        f"{game_start_message}"
         f"Turn {game.turn_count} - {interaction.user.display_name}'s Turn - {game.current_phase.value} Phase",
         file=discord.File(board_image, "board.png"),
         view=GameActionView(game, interaction) # Pass the interaction so we can edit it later
     )
 
-# --- NEW: View Card Command ---
+# --- View Card Command ---
 @bot.tree.command(name="viewcard", description="Look up a card from the library", guild=TEST_GUILD)
 @app_commands.autocomplete(card_id=card_autocomplete)
 @app_commands.describe(card_id="The ID of the card you want to view")
@@ -579,11 +626,18 @@ admin_group = app_commands.Group(name="admin", description="Admin-only commands"
     power="Attack power",
     defense="Defense value",
     hp="Health points",
-    effect="Card effect text (optional)"
+    effect="Card effect text (optional)",
+    effects_json="JSON string for effects (e.g., '{\"direct_attack\": true}')"
 )
-async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, cost: int, power: int, defense: int, hp: int, effect: str = ""):
+async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, cost: int, power: int, defense: int, hp: int, effect: str = "", effects_json: str = "{}"):
     if card_manager.get_card(card_id):
         await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists!", ephemeral=True)
+        return
+    
+    try:
+        effects_dict = json.loads(effects_json)
+    except json.JSONDecodeError:
+        await interaction.response.send_message("Error: Invalid JSON format in `effects_json`.", ephemeral=True)
         return
 
     new_card_data = {
@@ -592,7 +646,8 @@ async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, 
         "power": power,
         "defense": defense,
         "hp": hp,
-        "effect": effect
+        "effect": effect,
+        "effects": effects_dict # Add the new effects
     }
     
     if card_manager.update_card(card_id, new_card_data, "spirits"):
@@ -608,18 +663,26 @@ async def add_spirit(interaction: discord.Interaction, card_id: str, name: str, 
     name="The display name (e.g., 'Ice Blast')",
     cost="Activation cost (Aether)",
     effect="Card effect text",
-    scaling="Damage/Heal/etc. value (optional)"
+    scaling="Damage/Heal/etc. value (optional)",
+    effects_json="JSON string for effects (e.g., '{\"aoe_damage\": true}')"
 )
-async def add_spell(interaction: discord.Interaction, card_id: str, name: str, cost: int, effect: str, scaling: int = 0):
+async def add_spell(interaction: discord.Interaction, card_id: str, name: str, cost: int, effect: str, scaling: int = 0, effects_json: str = "{}"):
     if card_manager.get_card(card_id):
         await interaction.response.send_message(f"Error: Card ID '{card_id}' already exists!", ephemeral=True)
+        return
+
+    try:
+        effects_dict = json.loads(effects_json)
+    except json.JSONDecodeError:
+        await interaction.response.send_message("Error: Invalid JSON format in `effects_json`.", ephemeral=True)
         return
 
     new_card_data = {
         "name": name,
         "activation_cost": cost,
         "effect": effect,
-        "scaling": scaling
+        "scaling": scaling,
+        "effects": effects_dict
     }
     
     if card_manager.update_card(card_id, new_card_data, "spells"):

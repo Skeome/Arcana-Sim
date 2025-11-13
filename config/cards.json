@@ -6,7 +6,10 @@
       "power": 2,
       "defense": 3,
       "hp": 8,
-      "effect": "Defense cannot be reduced"
+      "effect": "Defense cannot be reduced",
+      "effects": {
+        "prevent_defense_reduction": true
+      }
     },
     "frost_wyrm": {
       "name": "Frost Wyrm",
@@ -14,15 +17,21 @@
       "power": 4,
       "defense": 1,
       "hp": 12,
-      "effect": "Attack reduces target defense by 1"
+      "effect": "Attack reduces target defense by 1",
+      "effects": {
+        "reduce_defense": 1
+      }
     },
     "inferno_dragon": {
       "name": "Inferno Dragon",
       "activation_cost": 3,
       "power": 6,
       "defense": 0,
-      "hp": 10,
-      "effect": "Can attack wizard directly"
+      "hp": 16,
+      "effect": "Can attack wizard directly",
+      "effects": {
+        "direct_attack": true
+      }
     },
     "wind_sentinel": {
       "name": "Wind Sentinel",
@@ -30,7 +39,9 @@
       "power": 9,
       "defense": 3,
       "hp": 18,
-      "effect": ""
+      "effect": "",
+      "effects": {
+      }
     }
   },
   "spells": {
@@ -38,25 +49,41 @@
       "name": "Firestorm",
       "activation_cost": 3,
       "effect": "Deal 3 damage to all enemy spirits",
-      "scaling": 3
+      "scaling": 3,
+      "effects": {
+        "aoe_damage": true,
+        "target": "enemy_spirits"
+      }
     },
     "earthquake": {
       "name": "Earthquake",
       "activation_cost": 6,
       "effect": "Deal 5 damage to all enemy spirits",
-      "scaling": 6
+      "scaling": 6,
+      "effects": {
+        "aoe_damage": true,
+        "target": "enemy_spirits"
+      }
     },
     "wind_blade": {
       "name": "Wind Blade",
       "activation_cost": 5,
       "effect": "Deal 3 damage to all enemy spirits",
-      "scaling": 5
+      "scaling": 5,
+      "effects": {
+        "aoe_damage": true,
+        "target": "enemy_spirits"
+      }
     },
     "healing_wave": {
       "name": "Healing Wave",
       "activation_cost": 2,
       "effect": "Heal 4 HP to spirit and 2 HP to wizard",
-      "scaling": 4
+      "scaling": 0,
+      "effects": {
+        "heal_wizard": 2,
+        "heal_spirit": 4
+      }
     }
   }
 }
