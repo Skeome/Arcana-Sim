@@ -14,7 +14,7 @@ load_dotenv()
 
 DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN")
 ADMIN_IDS_STR = os.environ.get("ADMIN_USER_IDS", "")
-TEST_GUILD_ID_STR = os.environ.get("TEST_GUILD_ID")
+TEST_GUILD_ID_STR = os.environ.get("TEST_GUILD_ID", "") # Default to empty string
 
 # --- NEW: Load AI API Keys ---
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -23,9 +23,13 @@ STABILITY_MODEL_ID = os.environ.get("STABILITY_MODEL_ID", "stable-diffusion-v1-6
 
 # Process the loaded variables
 ADMIN_USER_IDS = [int(id.strip()) for id in ADMIN_IDS_STR.split(',') if id.strip()]
-TEST_GUILD = discord.Object(id=int(TEST_GUILD_ID_STR)) if TEST_GUILD_ID_STR else None
 
-if not TEST_GUILD:
+# --- MODIFIED: Process multiple guild IDs ---
+TEST_GUILD_IDS = [int(id.strip()) for id in TEST_GUILD_ID_STR.split(',') if id.strip()]
+TEST_GUILDS = [discord.Object(id=gid) for gid in TEST_GUILD_IDS]
+# --- End of MODIFICATION ---
+
+if not TEST_GUILDS:
     print("Warning: TEST_GUILD_ID not set in .env. Slash commands will sync globally (slow).")
 if not ADMIN_USER_IDS:
     print("Warning: ADMIN_USER_IDS not set in .env. Admin commands will not be available.")
@@ -683,17 +687,28 @@ async def on_ready():
         print("Warning: GEMINI_API_KEY not set in .env. AI description command will fail.")
     # -----------------------------
 
+    # --- MODIFIED: Sync logic for multiple guilds ---
     try:
-        if TEST_GUILD:
-            print(f"Syncing commands to Test Guild (ID: {TEST_GUILD.id})...")
-            # This syncs all commands (global and guild-specific) to the test guild.
-            synced = await bot.tree.sync(guild=TEST_GUILD)
+        if TEST_GUILDS:
+            print(f"Syncing commands to {len(TEST_GUILDS)} test guild(s)...")
+            for guild in TEST_GUILDS:
+                try:
+                    # --- MODIFIED: Comment description is more accurate ---
+                    # Sync all guild-specific commands to this guild
+                    synced = await bot.tree.sync(guild=guild)
+                    print(f"Synced {len(synced)} command(s) to Guild (ID: {guild.id}).")
+                except discord.errors.Forbidden:
+                    print(f"Failed to sync to Guild {guild.id} (Forbidden). Make sure bot has 'applications.commands' scope.")
+                except Exception as e:
+                    print(f"Failed to sync to Guild {guild.id}: {e}")
         else:
-            print("Syncing commands globally (this may take an hour)...")
+            print("No test guilds set. Syncing commands globally (this may take an hour)...")
+            # This syncs all global commands
             synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s).")
+            print(f"Synced {len(synced)} global command(s).")
     except Exception as e:
-        print(f"Failed to sync commands: {e}")
+        print(f"An error occurred during command sync: {e}")
+    # --- End of MODIFICATION ---
 
 @bot.event
 async def on_close():
@@ -723,7 +738,8 @@ async def card_autocomplete(
 
 # --- Game Commands ---
 
-@bot.tree.command(name="challenge", description="Challenge another player (or the bot) to a game", guild=TEST_GUILD)
+# --- MODIFIED: Reverted to guild-specific commands using 'guilds' (plural) ---
+@bot.tree.command(name="challenge", description="Challenge another player (or the bot) to a game", guilds=TEST_GUILDS)
 @app_commands.describe(opponent="The player you want to challenge (select me to play solo!)")
 async def challenge(interaction: discord.Interaction, opponent: discord.User):
     # --- MODIFIED: Allow challenging self or bot ---
@@ -763,7 +779,8 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
     )
 
 # --- View Card Command ---
-@bot.tree.command(name="viewcard", description="Look up a card from the library", guild=TEST_GUILD)
+# --- MODIFIED: Reverted to guild-specific commands using 'guilds' (plural) ---
+@bot.tree.command(name="viewcard", description="Look up a card from the library", guilds=TEST_GUILDS)
 @app_commands.autocomplete(card_id=card_autocomplete)
 @app_commands.describe(card_id="The ID of the card you want to view")
 async def viewcard(interaction: discord.Interaction, card_id: str):
@@ -795,7 +812,8 @@ async def viewcard(interaction: discord.Interaction, card_id: str):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- NEW: List Cards Command ---
-@bot.tree.command(name="listcards", description="Lists all cards in the library", guild=TEST_GUILD)
+# --- MODIFIED: Reverted to guild-specific commands using 'guilds' (plural) ---
+@bot.tree.command(name="listcards", description="Lists all cards in the library", guilds=TEST_GUILDS)
 async def listcards(interaction: discord.Interaction):
     spirits = card_manager.cards.get("spirits", {})
     spells = card_manager.cards.get("spells", {})
@@ -828,7 +846,7 @@ async def listcards(interaction: discord.Interaction):
 
 # --- Deck Management Commands ---
 
-# Define the group and register it to the test guild
+# --- MODIFIED: Removed guild_ids from the group definition ---
 deck_group = app_commands.Group(name="deck", description="Manage your custom deck")
 
 # Add commands to the group
@@ -909,14 +927,25 @@ async def deck_reset(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("You don't have a custom deck to delete.", ephemeral=True)
 
-# Add the group to the bot's command tree
-bot.tree.add_command(deck_group, guild=TEST_GUILD)
+# --- MODIFIED: Added guilds parameter to the add_command call ---
+bot.tree.add_command(deck_group, guilds=TEST_GUILDS)
 
 
 # --- Admin Commands ---
 
-# Define the group and register it to the test guild
-admin_group = app_commands.Group(name="admin", description="Admin-only commands", default_permissions=discord.Permissions(administrator=True))
+# --- MODIFIED: Removed guild_ids from the group definition ---
+admin_group = app_commands.Group(name="admin", description="Admin-only commands")
+
+# --- NEW: Group-level error handler ---
+@admin_group.error
+async def on_admin_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Handles errors for all commands in the admin group."""
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+    else:
+        print(f"Unhandled error in admin command: {error}")
+        await interaction.response.send_message(f"An unexpected error occurred: {error}", ephemeral=True)
+# --- End of NEW code ---
 
 # Add commands to the group
 @admin_group.command(name="addspirit", description="[Admin] Add a new spirit to the card library")
@@ -1138,8 +1167,8 @@ async def shutdown_error(interaction: discord.Interaction, error: app_commands.A
     else:
         await interaction.response.send_message(f"An error occurred: {error}", ephemeral=True)
 
-# Add the group to the bot's command tree
-bot.tree.add_command(admin_group, guild=TEST_GUILD)
+# --- MODIFIED: Added guilds parameter to the add_command call ---
+bot.tree.add_command(admin_group, guilds=TEST_GUILDS)
 
 
 # --- Run the Bot ---
