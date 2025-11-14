@@ -246,7 +246,7 @@ def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
     # Hand
     # --- MODIFIED: Hand X positions ---
     player_hand_x = 1500  # Player's hand on the right
-    opponent_hand_x = 1500 # Opponent's hand closer to the center
+    opponent_hand_x = 1500 # Opponent's hand on the right (from their perspective)
     
     hand_x = opponent_hand_x if is_opponent else player_hand_x
     # --- MODIFIED: Y value for hand text (to fix clipping) ---
@@ -268,8 +268,8 @@ def draw_player_area(draw, player_state, user_name, y_start, is_opponent):
     # --- MODIFIED: Y coordinates and X start positions for new card size ---
     
     # Spirit Slots
-    # Opponent: spirit_y = 0 + (540 - 210 - 20) = 310
-    # Player:   spirit_y = 540 + 20 = 560
+    # Opponent: spirit_y = 0 + (540 - 210 - 50) = 280
+    # Player:   spirit_y = 540 + 50 = 590
     spirit_y = y_start + (h - card_h - 50 if is_opponent else 50)
     total_spirit_width = (3 * card_w) + (2 * gap)
     spirit_x_start = (w - total_spirit_width) // 2
@@ -385,10 +385,10 @@ class GameActionView(discord.ui.View):
     The main UI view with buttons for actions.
     This is attached to the public board message.
     """
-    def __init__(self, game: ArcanaGame, original_interaction: discord.Interaction):
+    def __init__(self, game: ArcanaGame):
         super().__init__(timeout=None) # Persistent view
         self.game = game
-        self.original_interaction = original_interaction
+        self.game_message: discord.WebhookMessage = None # This will be set after the message is sent
 
     async def _check_turn(self, interaction: discord.Interaction) -> bool:
         """Helper to check if it's the user's turn."""
@@ -397,9 +397,18 @@ class GameActionView(discord.ui.View):
             return False
         return True
 
-    async def _update_board(self, interaction: discord.Interaction, message_prefix: str = ""):
+    async def _update_board(self, triggering_interaction: discord.Interaction, message_prefix: str = ""):
         """Helper to update the public board message."""
         
+        if not self.game_message:
+            print("Error: _update_board called but self.game_message is not set.")
+            # We can't update, but we can try to notify the user who clicked
+            if not triggering_interaction.response.is_done():
+                await triggering_interaction.response.send_message("An error occurred trying to update the board: `game_message` was None.", ephemeral=True)
+            else:
+                await triggering_interaction.followup.send("An error occurred trying to update the board: `game_message` was None.", ephemeral=True)
+            return
+
         # Check for game over
         if self.game.game_over:
             # Check if winner is the bot
@@ -416,11 +425,11 @@ class GameActionView(discord.ui.View):
             file = discord.File(board_image, "board.png")
             
             # Edit the original message to show winner and stop buttons
-            await self.original_interaction.edit_original_response(content=content, attachments=[file], view=None)
+            await self.game_message.edit(content=content, attachments=[file], view=None)
             
             # Clean up the game
-            if interaction.channel.id in active_games:
-                del active_games[interaction.channel.id]
+            if triggering_interaction.channel.id in active_games:
+                del active_games[triggering_interaction.channel.id]
             return
 
         # If game is not over, update the board normally
@@ -439,7 +448,7 @@ class GameActionView(discord.ui.View):
         if message_prefix:
             content = f"{message_prefix}\n{content}"
 
-        await self.original_interaction.edit_original_response(
+        await self.game_message.edit(
             content=content,
             attachments=[file],
             view=self
@@ -496,9 +505,53 @@ class GameActionView(discord.ui.View):
             await interaction.response.send_message("You can only attack in the Invocation phase.", ephemeral=True)
             return
         
-        # TODO: This needs to be implemented similar to Summon/Prepare
-        await interaction.response.send_message("Attack logic not fully implemented yet.", ephemeral=True) # TODO: Add view
+        # --- NEW: Show Attacker Selection ---
+        player_state = self.game.players[interaction.user.id]
+        
+        # Find spirits that can attack (in a slot and affordable)
+        attackers = []
+        for i, spirit in enumerate(player_state.spirit_slots):
+            if spirit and player_state.aether >= spirit.activation_cost:
+                attackers.append((i, spirit))
 
+        if not attackers:
+            await interaction.response.send_message("You have no spirits that can attack (or not enough Aether).", ephemeral=True)
+            return
+
+        await interaction.response.send_message(
+            "Select your attacking Spirit:",
+            view=SelectAttackerView(self.game, self, attackers),
+            ephemeral=True
+        )
+
+    # --- NEW: Activate Button ---
+    @discord.ui.button(label="Activate", style=discord.ButtonStyle.primary, custom_id="activate_spell")
+    async def activate(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_turn(interaction): return
+
+        if self.game.current_phase != Phase.INVOCATION:
+            await interaction.response.send_message("You can only activate spells in the Invocation phase.", ephemeral=True)
+            return
+            
+        player_state = self.game.players[interaction.user.id]
+        
+        # Find spells that can be activated (in a slot and affordable)
+        activatable_spells = []
+        for i, spell_stack in enumerate(player_state.spell_slots):
+            if spell_stack:
+                spell = spell_stack[0]
+                if player_state.aether >= spell.activation_cost:
+                    activatable_spells.append((i, spell, len(spell_stack)))
+        
+        if not activatable_spells:
+            await interaction.response.send_message("You have no spells that can be activated (or not enough Aether).", ephemeral=True)
+            return
+            
+        await interaction.response.send_message(
+            "Select a Spell to Activate:",
+            view=SelectSpellToActivateView(self.game, self, activatable_spells),
+            ephemeral=True
+        )
 
     @discord.ui.button(label="End Phase", style=discord.ButtonStyle.secondary, custom_id="end_phase")
     async def end_phase(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -544,9 +597,12 @@ class GameActionView(discord.ui.View):
         await self._update_board(interaction, message_prefix)
 
 
+# --- Memorization Phase Views (Summon/Prepare) ---
+
 class SelectCardToPlayView(discord.ui.View):
     """
     An ephemeral view showing buttons for cards in hand.
+    Used for Summon and Prepare.
     """
     def __init__(self, game: ArcanaGame, action_type: str, main_view: GameActionView):
         super().__init__(timeout=180)
@@ -660,6 +716,216 @@ class SlotButton(discord.ui.Button):
             await interaction.response.edit_message(content=message, view=None)
 
 
+# --- NEW: Invocation Phase Views (Attack) ---
+
+class SelectAttackerView(discord.ui.View):
+    """
+    An ephemeral view showing buttons for which spirit to attack with.
+    """
+    def __init__(self, game: ArcanaGame, main_view: GameActionView, attackers: list):
+        super().__init__(timeout=180)
+        self.game = game
+        self.main_view = main_view
+        
+        for slot_index, spirit in attackers:
+            label = f"{spirit.name} (Slot {slot_index+1}) - {spirit.activation_cost} Aether"
+            self.add_item(AttackerButton(game, spirit, slot_index, label, main_view))
+
+class AttackerButton(discord.ui.Button):
+    """
+    A button representing a single spirit that can attack.
+    """
+    def __init__(self, game: ArcanaGame, spirit, slot_index: int, label: str, main_view: GameActionView):
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+        self.game = game
+        self.spirit = spirit
+        self.slot_index = slot_index
+        self.main_view = main_view
+
+    async def callback(self, interaction: discord.Interaction):
+        # Now that an attacker is selected, show the targets
+        await interaction.response.edit_message(
+            content=f"Select target for {self.spirit.name}:",
+            view=SelectAttackTargetView(self.game, self.spirit, self.slot_index, self.main_view)
+        )
+
+class SelectAttackTargetView(discord.ui.View):
+    """
+    An ephemeral view showing buttons for attack targets (opponent spirits + wizard).
+    """
+    def __init__(self, game: ArcanaGame, attacker_spirit, attacker_slot: int, main_view: GameActionView):
+        super().__init__(timeout=180)
+        self.game = game
+        self.attacker_spirit = attacker_spirit
+        self.attacker_slot = attacker_slot
+        self.main_view = main_view
+
+        opponent_state = self.game.players[self.game.get_opponent_id(self.game.current_player_id)]
+        
+        # Check Guard Rule
+        has_guard = any(opponent_state.spirit_slots)
+        can_attack_wizard = not has_guard or self.attacker_spirit.effects.get("direct_attack", False)
+
+        # Add Wizard target
+        self.add_item(TargetButton(
+            game, 
+            attacker_slot=self.attacker_slot,
+            target_type="wizard",
+            target_index=-1, # Use -1 for wizard
+            label="Target Wizard",
+            is_disabled=not can_attack_wizard,
+            main_view=self.main_view
+        ))
+
+        # Add Spirit targets
+        for i, spirit in enumerate(opponent_state.spirit_slots):
+            label = f"Target Spirit {i+1}"
+            is_disabled = False
+            if spirit:
+                label += f" ({spirit.name})"
+            else:
+                label += " (Empty)"
+                is_disabled = True
+            
+            self.add_item(TargetButton(
+                game,
+                attacker_slot=self.attacker_slot,
+                target_type="spirit",
+                target_index=i,
+                label=label,
+                is_disabled=is_disabled,
+                main_view=self.main_view
+            ))
+
+class TargetButton(discord.ui.Button):
+    """
+    A button representing a single attack target.
+    This is the final step in the attack chain.
+    """
+    def __init__(self, game: ArcanaGame, attacker_slot: int, target_type: str, target_index: int, label: str, is_disabled: bool, main_view: GameActionView):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, disabled=is_disabled)
+        self.game = game
+        self.attacker_slot = attacker_slot
+        self.target_type = target_type
+        self.target_index = target_index
+        self.main_view = main_view
+
+    async def callback(self, interaction: discord.Interaction):
+        player_id = interaction.user.id
+        
+        success, message = self.game.attack_with_spirit(
+            player_id, 
+            self.attacker_slot, 
+            self.target_type, 
+            self.target_index if self.target_type == "spirit" else None
+        )
+        
+        if success:
+            await interaction.response.edit_message(content=message, view=None) # Edit the ephemeral message
+            await self.main_view._update_board(interaction, f"{interaction.user.display_name} {message}.")
+        else:
+            await interaction.response.edit_message(content=message, view=None)
+
+
+# --- NEW: Invocation Phase Views (Activate Spell) ---
+
+class SelectSpellToActivateView(discord.ui.View):
+    """
+    An ephemeral view showing buttons for which spell slot to activate.
+    """
+    def __init__(self, game: ArcanaGame, main_view: GameActionView, activatable_spells: list):
+        super().__init__(timeout=180)
+        self.game = game
+        self.main_view = main_view
+        
+        for slot_index, spell, stack_size in activatable_spells:
+            label = f"{spell.name} (Slot {slot_index+1}) - {stack_size}x"
+            self.add_item(SpellSlotActivateButton(game, spell, slot_index, stack_size, label, main_view))
+
+class SpellSlotActivateButton(discord.ui.Button):
+    """
+    A button representing a single spell slot that can be activated.
+    """
+    def __init__(self, game: ArcanaGame, spell, slot_index: int, stack_size: int, label: str, main_view: GameActionView):
+        super().__init__(label=label, style=discord.ButtonStyle.primary)
+        self.game = game
+        self.spell = spell
+        self.slot_index = slot_index
+        self.stack_size = stack_size
+        self.main_view = main_view
+
+    async def callback(self, interaction: discord.Interaction):
+        # Now that a spell is selected, show the copies view
+        await interaction.response.edit_message(
+            content=f"How many copies of {self.spell.name} to use?",
+            view=SelectSpellCopiesView(self.game, self.spell, self.slot_index, self.stack_size, self.main_view)
+        )
+
+class SelectSpellCopiesView(discord.ui.View):
+    """
+    An ephemeral view showing buttons for 1, 2, or 3 copies of a spell.
+    """
+    def __init__(self, game: ArcanaGame, spell, slot_index: int, stack_size: int, main_view: GameActionView):
+        super().__init__(timeout=180)
+        self.game = game
+        self.spell = spell
+        self.slot_index = slot_index
+        self.stack_size = stack_size
+        self.main_view = main_view
+
+        player_aether = self.game.players[self.game.current_player_id].aether
+        
+        for i in range(1, 4): # Buttons for 1, 2, 3 copies
+            is_disabled = False
+            label = f"Use {i} Cop{'y' if i == 1 else 'ies'}"
+            cost = self.spell.activation_cost * i
+            
+            if i > self.stack_size:
+                is_disabled = True
+                label += " (Not in stack)"
+            elif cost > player_aether:
+                is_disabled = True
+                label += f" (Need {cost} Aether)"
+            else:
+                label += f" ({cost} Aether)"
+
+            self.add_item(CopiesButton(
+                game,
+                slot_index=self.slot_index,
+                num_copies=i,
+                label=label,
+                is_disabled=is_disabled,
+                main_view=self.main_view
+            ))
+
+class CopiesButton(discord.ui.Button):
+    """
+    A button representing a number of copies to use.
+    This is the final step in the activate chain.
+    """
+    def __init__(self, game: ArcanaGame, slot_index: int, num_copies: int, label: str, is_disabled: bool, main_view: GameActionView):
+        super().__init__(label=label, style=discord.ButtonStyle.secondary, disabled=is_disabled)
+        self.game = game
+        self.slot_index = slot_index
+        self.num_copies = num_copies
+        self.main_view = main_view
+
+    async def callback(self, interaction: discord.Interaction):
+        player_id = interaction.user.id
+        
+        success, message = self.game.activate_spell(
+            player_id, 
+            self.slot_index, 
+            self.num_copies
+        )
+        
+        if success:
+            await interaction.response.edit_message(content=message, view=None) # Edit the ephemeral message
+            await self.main_view._update_board(interaction, f"{interaction.user.display_name} {message}.")
+        else:
+            await interaction.response.edit_message(content=message, view=None)
+
+
 # --- Bot Commands ---
 
 @bot.event
@@ -770,13 +1036,21 @@ async def challenge(interaction: discord.Interaction, opponent: discord.User):
     if opponent.id == bot.user.id:
         game_start_message = f"{interaction.user.mention} has challenged the bot to a solo game!\n"
 
-    # Send the first message (which is public)
-    await interaction.followup.send(
+    # --- UPDATED ---
+    # 1. Create the view instance first
+    view = GameActionView(game)
+
+    # 2. Send the message with the view
+    game_message = await interaction.followup.send(
         f"{game_start_message}"
         f"Turn {game.turn_count} - {interaction.user.display_name}'s Turn - {game.current_phase.value} Phase",
         file=discord.File(board_image, "board.png"),
-        view=GameActionView(game, interaction) # Pass the interaction so we can edit it later
+        view=view # Pass the view
     )
+    
+    # 3. Store the sent message back into the view for future edits
+    view.game_message = game_message
+    # --- END OF UPDATE ---
 
 # --- View Card Command ---
 # --- MODIFIED: Reverted to guild-specific commands using 'guilds' (plural) ---

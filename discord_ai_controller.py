@@ -196,15 +196,15 @@ class DiscordAIController:
             elif move["type"] == "summon_spirit":
                 success, message = game.summon_spirit(self.bot_id, move["spirit_name"], move["slot_index"])
                 game.next_phase()
-                break
+                continue # <-- *** FIX: Was 'break', now 'continue' ***
             elif move["type"] == "prepare_spell":
                 success, message = game.prepare_spell(self.bot_id, move["spell_name"], move["slot_index"])
                 game.next_phase()
-                break
+                continue # <-- *** FIX: Was 'break', now 'continue' ***
             elif move["type"] == "replace_spell":
                 success, message = game.replace_spell(self.bot_id, move["new_spell_name"], move["slot_index"])
                 game.next_phase()
-                break
+                continue # <-- Was 'break', now 'continue'
             
             elif move["type"] == "activate_spell":
                 success, message = game.activate_spell(self.bot_id, move["slot_index"], move["copies_used"])

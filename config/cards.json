@@ -28,8 +28,9 @@
       "power": 6,
       "defense": 0,
       "hp": 8,
-      "effect": "",
+      "effect": "Attack all enemy spirits",
       "effects": {
+        "aoe_damage":true,
         "direct_attack": false
       }
     },
@@ -39,8 +40,9 @@
       "power": 20,
       "defense": 10,
       "hp": 1,
-      "effect": "",
+      "effect": "Can directly attack opponent.",
       "effects": {
+        "direct_attack": true
       }
     }
   },
@@ -57,7 +59,7 @@
     },
     "earthquake": {
       "name": "Earthquake",
-      "activation_cost": 6,
+      "activation_cost": 5,
       "effect": "Deal 5 damage to all enemy spirits",
       "scaling": 6,
       "effects": {
@@ -69,7 +71,7 @@
       "name": "Wind Blade",
       "activation_cost": 5,
       "effect": "Deal 3 damage to all enemy spirits",
-      "scaling": 5,
+      "scaling": 6,
       "effects": {
         "aoe_damage": true,
         "target": "enemy_spirits"
